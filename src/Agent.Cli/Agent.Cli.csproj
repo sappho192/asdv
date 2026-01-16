@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>Agent.Cli</RootNamespace>
+    <AssemblyName>agent</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="System.CommandLine" Version="2.0.0-beta4.22272.1" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Agent.Core\Agent.Core.csproj" />
+    <ProjectReference Include="..\Agent.Tools\Agent.Tools.csproj" />
+    <ProjectReference Include="..\Agent.Workspace\Agent.Workspace.csproj" />
+    <ProjectReference Include="..\Agent.Llm.Anthropic\Agent.Llm.Anthropic.csproj" />
+    <ProjectReference Include="..\Agent.Llm.OpenAI\Agent.Llm.OpenAI.csproj" />
+    <ProjectReference Include="..\Agent.Logging\Agent.Logging.csproj" />
+  </ItemGroup>
+
+</Project>
