@@ -1,0 +1,1 @@
+Suggest me a commit message for the staged changes
