@@ -186,7 +186,7 @@ Task<PolicyDecision> EvaluateAsync(ITool tool, string argsJson)
 | Option | Alias | Description | Default |
 |--------|-------|-------------|---------|
 | `--repo` | `-r` | Repository root path | Current directory |
-| `--provider` | `-p` | LLM provider (openai\|anthropic) | anthropic |
+| `--provider` | `-p` | LLM provider (openai\|anthropic) | openai |
 | `--model` | `-m` | Model name | Provider-specific |
 | `--yes` | `-y` | Auto-approve all tool calls | false |
 | `--session` | `-s` | Session log file path | Auto-generated |

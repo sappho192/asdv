@@ -34,7 +34,7 @@ export ANTHROPIC_API_KEY=your_key_here
 # or
 export OPENAI_API_KEY=your_key_here
 
-# Run with default settings (Anthropic)
+# Run with default settings (OpenAI)
 dotnet run --project src/Agent.Cli -- "Describe the project structure"
 
 # Run with OpenAI
@@ -52,7 +52,7 @@ dotnet run --project src/Agent.Cli -- -r /path/to/repo "Refactor the authenticat
 | Option | Alias | Description | Default |
 |--------|-------|-------------|---------|
 | `--repo` | `-r` | Repository root path | Current directory |
-| `--provider` | `-p` | LLM provider (`openai` or `anthropic`) | `anthropic` |
+| `--provider` | `-p` | LLM provider (`openai` or `anthropic`) | `openai` |
 | `--model` | `-m` | Model name | Provider-specific |
 | `--yes` | `-y` | Auto-approve all tool calls | `false` |
 | `--session` | `-s` | Session log file path | Auto-generated |

@@ -1409,7 +1409,7 @@ var repoOption = new Option<string>(
 
 var providerOption = new Option<string>(
     "--provider",
-    getDefaultValue: () => "anthropic",
+    getDefaultValue: () => "openai",
     description: "LLM provider (openai|anthropic)");
 
 var modelOption = new Option<string>(
