@@ -21,6 +21,9 @@ dotnet run --project src/Agent.Cli -- "your prompt here"
 # Run with specific provider
 dotnet run --project src/Agent.Cli -- -p openai "your prompt"
 dotnet run --project src/Agent.Cli -- -p anthropic "your prompt"
+
+# Run with debug output (shows stack traces and detailed errors)
+dotnet run --project src/Agent.Cli -- -d -p openai "your prompt"
 ```
 
 ## Project Structure
@@ -188,3 +191,4 @@ Task<PolicyDecision> EvaluateAsync(ITool tool, string argsJson)
 | `--yes` | `-y` | Auto-approve all tool calls | false |
 | `--session` | `-s` | Session log file path | Auto-generated |
 | `--max-iterations` | | Maximum agent iterations | 20 |
+| `--debug` | `-d` | Enable debug output (stack traces) | false |
