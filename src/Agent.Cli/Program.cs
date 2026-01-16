@@ -10,6 +10,10 @@ using Agent.Llm.OpenAI;
 using Agent.Logging;
 using Agent.Tools;
 using Agent.Workspace;
+using DotNetEnv;
+
+// Load .env file if it exists
+Env.Load();
 
 var repoOption = new Option<string>(
     aliases: ["--repo", "-r"],
