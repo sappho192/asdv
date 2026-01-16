@@ -44,6 +44,7 @@ public class AgentOrchestrator
 
         await _logger.LogAsync(new { type = "user_prompt", content = userPrompt });
 
+        var exhausted = true;
         for (int iteration = 0; iteration < _options.MaxIterations; iteration++)
         {
             var request = BuildRequest(messages);
@@ -75,7 +76,7 @@ public class AgentOrchestrator
 
                     case ResponseCompleted completed:
                         Console.WriteLine();
-                        if (completed.StopReason == "end_turn" && pendingToolCalls.Count == 0)
+                        if (IsCompletionStopReason(completed.StopReason) && pendingToolCalls.Count == 0)
                         {
                             Console.ForegroundColor = ConsoleColor.Green;
                             Console.WriteLine("[Agent completed]");
@@ -109,13 +110,17 @@ public class AgentOrchestrator
             }
             else
             {
+                exhausted = false;
                 break;
             }
         }
 
-        Console.ForegroundColor = ConsoleColor.Yellow;
-        Console.WriteLine("[Max iterations reached]");
-        Console.ResetColor();
+        if (exhausted)
+        {
+            Console.ForegroundColor = ConsoleColor.Yellow;
+            Console.WriteLine("[Max iterations reached]");
+            Console.ResetColor();
+        }
     }
 
     private async Task<ToolResult> ExecuteToolCallAsync(ToolCallReady toolCall, CancellationToken ct)
@@ -217,5 +222,10 @@ public class AgentOrchestrator
         var singleLine = str.Replace("\r", "").Replace("\n", " ");
         if (singleLine.Length <= maxLength) return singleLine;
         return singleLine[..maxLength] + "...";
+    }
+
+    private static bool IsCompletionStopReason(string? stopReason)
+    {
+        return stopReason == "end_turn" || stopReason == "stop";
     }
 }

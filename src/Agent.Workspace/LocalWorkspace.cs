@@ -38,41 +38,71 @@ public class LocalWorkspace : IWorkspace
     {
         var normalized = NormalizePath(fullPath);
 
-        // Must be under root
-        if (!normalized.StartsWith(_normalizedRoot, StringComparison.OrdinalIgnoreCase))
-            return false;
-
-        // Ensure it's actually a subdirectory, not just a prefix match
-        if (normalized.Length > _normalizedRoot.Length)
-        {
-            var separator = normalized[_normalizedRoot.Length];
-            if (separator != Path.DirectorySeparatorChar && separator != Path.AltDirectorySeparatorChar)
-                return false;
-        }
-
-        // Check for symlink escape (if path exists)
         try
         {
-            if (File.Exists(fullPath) || Directory.Exists(fullPath))
-            {
-                var fileInfo = new FileInfo(fullPath);
-                if (fileInfo.Attributes.HasFlag(FileAttributes.ReparsePoint))
-                {
-                    // Resolve symlink target and check if it's safe
-                    var target = fileInfo.ResolveLinkTarget(returnFinalTarget: true);
-                    if (target != null)
-                    {
-                        var targetPath = target.FullName;
-                        if (!NormalizePath(targetPath).StartsWith(_normalizedRoot, StringComparison.OrdinalIgnoreCase))
-                            return false;
-                    }
-                }
-            }
+            if (!IsUnderRoot(normalized))
+                return false;
+
+            if (!AreSymlinksSafe(normalized))
+                return false;
         }
         catch
         {
             // If we can't check, assume unsafe
             return false;
+        }
+
+        return true;
+    }
+
+    private bool AreSymlinksSafe(string normalizedPath)
+    {
+        var relative = Path.GetRelativePath(_normalizedRoot, normalizedPath);
+        if (relative == ".")
+            return true;
+
+        var parts = relative.Split(
+            [Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar],
+            StringSplitOptions.RemoveEmptyEntries);
+
+        var current = _normalizedRoot;
+        foreach (var part in parts)
+        {
+            current = Path.Combine(current, part);
+            if (!File.Exists(current) && !Directory.Exists(current))
+                continue;
+
+            FileSystemInfo info = Directory.Exists(current)
+                ? new DirectoryInfo(current)
+                : new FileInfo(current);
+
+            if (info.Attributes.HasFlag(FileAttributes.ReparsePoint))
+            {
+                var target = info.ResolveLinkTarget(returnFinalTarget: true);
+                if (target == null)
+                    return false;
+
+                var targetPath = NormalizePath(target.FullName);
+                if (!IsUnderRoot(targetPath))
+                    return false;
+            }
+        }
+
+        return true;
+    }
+
+    private bool IsUnderRoot(string normalizedPath)
+    {
+        // Must be under root
+        if (!normalizedPath.StartsWith(_normalizedRoot, StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        // Ensure it's actually a subdirectory, not just a prefix match
+        if (normalizedPath.Length > _normalizedRoot.Length)
+        {
+            var separator = normalizedPath[_normalizedRoot.Length];
+            if (separator != Path.DirectorySeparatorChar && separator != Path.AltDirectorySeparatorChar)
+                return false;
         }
 
         return true;
