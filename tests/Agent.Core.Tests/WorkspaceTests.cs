@@ -115,4 +115,44 @@ public class WorkspaceTests : IDisposable
         result.Should().Contain("components");
         result.Should().EndWith("Button.tsx");
     }
+
+    [Fact]
+    public void ResolvePath_SymlinkedParentOutsideRoot_ReturnsNull()
+    {
+        var outsideRoot = Path.Combine(Path.GetTempPath(), "agent_outside_" + Guid.NewGuid());
+        Directory.CreateDirectory(outsideRoot);
+
+        var symlinkPath = Path.Combine(_testRoot, "linked");
+        try
+        {
+            Directory.CreateSymbolicLink(symlinkPath, outsideRoot);
+        }
+        catch
+        {
+            // Symlinks may be restricted; skip if not supported.
+            Directory.Delete(outsideRoot, recursive: true);
+            return;
+        }
+
+        try
+        {
+            var outsideFile = Path.Combine(outsideRoot, "file.txt");
+            File.WriteAllText(outsideFile, "outside");
+
+            var result = _workspace.ResolvePath("linked/file.txt");
+
+            result.Should().BeNull();
+        }
+        finally
+        {
+            try
+            {
+                Directory.Delete(outsideRoot, recursive: true);
+            }
+            catch
+            {
+                // Ignore cleanup errors
+            }
+        }
+    }
 }
