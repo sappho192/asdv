@@ -43,6 +43,11 @@ var maxIterationsOption = new Option<int>(
     getDefaultValue: () => 20,
     description: "Maximum agent iterations");
 
+var debugOption = new Option<bool>(
+    aliases: ["--debug", "-d"],
+    getDefaultValue: () => false,
+    description: "Enable debug output (stack traces, detailed errors)");
+
 var promptArgument = new Argument<string>(
     name: "prompt",
     description: "Task prompt for the agent");
@@ -55,6 +60,7 @@ var rootCommand = new RootCommand("Local coding agent - Claude Code style")
     autoApproveOption,
     sessionOption,
     maxIterationsOption,
+    debugOption,
     promptArgument
 };
 
@@ -66,11 +72,12 @@ rootCommand.SetHandler(async (context) =>
     var autoApprove = context.ParseResult.GetValueForOption(autoApproveOption);
     var session = context.ParseResult.GetValueForOption(sessionOption);
     var maxIterations = context.ParseResult.GetValueForOption(maxIterationsOption);
+    var debug = context.ParseResult.GetValueForOption(debugOption);
     var prompt = context.ParseResult.GetValueForArgument(promptArgument);
 
     var ct = context.GetCancellationToken();
 
-    await RunAgentAsync(repo, provider, model, autoApprove, session, maxIterations, prompt, ct);
+    await RunAgentAsync(repo, provider, model, autoApprove, session, maxIterations, debug, prompt, ct);
 });
 
 return await rootCommand.InvokeAsync(args);
@@ -82,6 +89,7 @@ static async Task RunAgentAsync(
     bool autoApprove,
     string? session,
     int maxIterations,
+    bool debug,
     string prompt,
     CancellationToken ct)
 {
@@ -198,7 +206,20 @@ static async Task RunAgentAsync(
     {
         Console.WriteLine();
         Console.ForegroundColor = ConsoleColor.Red;
-        Console.WriteLine($"[Error] {ex.Message}");
+
+        if (debug)
+        {
+            Console.WriteLine($"[Error] {ex.GetType().Name}: {ex.Message}");
+            Console.WriteLine();
+            Console.WriteLine("Stack trace:");
+            Console.WriteLine(ex.StackTrace);
+        }
+        else
+        {
+            Console.WriteLine($"[Error] {ex.Message}");
+            Console.WriteLine("(Run with --debug for detailed error information)");
+        }
+
         Console.ResetColor();
     }
     finally
