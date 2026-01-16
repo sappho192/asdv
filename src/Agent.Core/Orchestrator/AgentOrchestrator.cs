@@ -1,0 +1,221 @@
+using System.Text;
+using System.Text.Json;
+using Agent.Core.Approval;
+using Agent.Core.Events;
+using Agent.Core.Logging;
+using Agent.Core.Messages;
+using Agent.Core.Policy;
+using Agent.Core.Providers;
+using Agent.Core.Tools;
+
+namespace Agent.Core.Orchestrator;
+
+public class AgentOrchestrator
+{
+    private readonly IModelProvider _provider;
+    private readonly ToolRegistry _toolRegistry;
+    private readonly IApprovalService _approvalService;
+    private readonly IPolicyEngine _policyEngine;
+    private readonly ISessionLogger _logger;
+    private readonly AgentOptions _options;
+
+    public AgentOrchestrator(
+        IModelProvider provider,
+        ToolRegistry toolRegistry,
+        IApprovalService approvalService,
+        IPolicyEngine policyEngine,
+        ISessionLogger logger,
+        AgentOptions options)
+    {
+        _provider = provider;
+        _toolRegistry = toolRegistry;
+        _approvalService = approvalService;
+        _policyEngine = policyEngine;
+        _logger = logger;
+        _options = options;
+    }
+
+    public async Task RunAsync(string userPrompt, CancellationToken ct = default)
+    {
+        var messages = new List<ChatMessage>
+        {
+            new UserMessage(userPrompt)
+        };
+
+        await _logger.LogAsync(new { type = "user_prompt", content = userPrompt });
+
+        for (int iteration = 0; iteration < _options.MaxIterations; iteration++)
+        {
+            var request = BuildRequest(messages);
+            var pendingToolCalls = new List<ToolCallReady>();
+            var textBuffer = new StringBuilder();
+
+            await foreach (var evt in _provider.StreamAsync(request, ct))
+            {
+                await _logger.LogAsync(new { type = "event", eventType = evt.GetType().Name, data = evt });
+
+                switch (evt)
+                {
+                    case TextDelta delta:
+                        Console.Write(delta.Text);
+                        textBuffer.Append(delta.Text);
+                        break;
+
+                    case ToolCallStarted started:
+                        Console.WriteLine();
+                        Console.ForegroundColor = ConsoleColor.Cyan;
+                        Console.Write($"[tool] {started.ToolName}");
+                        Console.ResetColor();
+                        break;
+
+                    case ToolCallReady ready:
+                        Console.WriteLine($" args={TruncateJson(ready.ArgsJson, 100)}");
+                        pendingToolCalls.Add(ready);
+                        break;
+
+                    case ResponseCompleted completed:
+                        Console.WriteLine();
+                        if (completed.StopReason == "end_turn" && pendingToolCalls.Count == 0)
+                        {
+                            Console.ForegroundColor = ConsoleColor.Green;
+                            Console.WriteLine("[Agent completed]");
+                            Console.ResetColor();
+                            return;
+                        }
+                        break;
+                }
+            }
+
+            if (textBuffer.Length > 0 || pendingToolCalls.Count > 0)
+            {
+                messages.Add(new AssistantMessage
+                {
+                    Content = textBuffer.Length > 0 ? textBuffer.ToString() : null,
+                    ToolCalls = pendingToolCalls.Count > 0
+                        ? pendingToolCalls.Select(tc => new ToolCall(tc.CallId, tc.ToolName, tc.ArgsJson)).ToList()
+                        : null
+                });
+            }
+
+            if (pendingToolCalls.Count > 0)
+            {
+                foreach (var toolCall in pendingToolCalls)
+                {
+                    var result = await ExecuteToolCallAsync(toolCall, ct);
+                    messages.Add(new ToolResultMessage(toolCall.CallId, toolCall.ToolName, result));
+
+                    PrintToolResult(toolCall.ToolName, result);
+                }
+            }
+            else
+            {
+                break;
+            }
+        }
+
+        Console.ForegroundColor = ConsoleColor.Yellow;
+        Console.WriteLine("[Max iterations reached]");
+        Console.ResetColor();
+    }
+
+    private async Task<ToolResult> ExecuteToolCallAsync(ToolCallReady toolCall, CancellationToken ct)
+    {
+        var tool = _toolRegistry.GetTool(toolCall.ToolName);
+        if (tool == null)
+        {
+            return ToolResult.Failure($"Unknown tool: {toolCall.ToolName}");
+        }
+
+        var decision = await _policyEngine.EvaluateAsync(tool, toolCall.ArgsJson);
+        if (decision == PolicyDecision.Denied)
+        {
+            return ToolResult.Failure("Tool execution denied by policy");
+        }
+
+        if (decision == PolicyDecision.RequiresApproval)
+        {
+            var approved = await _approvalService.RequestApprovalAsync(
+                tool.Name, toolCall.ArgsJson, ct);
+            if (!approved)
+            {
+                return ToolResult.Failure("User denied approval");
+            }
+        }
+
+        try
+        {
+            var args = JsonDocument.Parse(toolCall.ArgsJson).RootElement;
+            var context = new ToolContext
+            {
+                RepoRoot = _options.RepoRoot,
+                Workspace = _options.Workspace,
+                ApprovalService = _approvalService
+            };
+
+            var result = await tool.ExecuteAsync(args, context, ct);
+            await _logger.LogAsync(new
+            {
+                type = "tool_result",
+                callId = toolCall.CallId,
+                tool = toolCall.ToolName,
+                ok = result.Ok,
+                diagnostics = result.Diagnostics
+            });
+
+            return result;
+        }
+        catch (Exception ex)
+        {
+            return ToolResult.Failure($"Tool execution failed: {ex.Message}");
+        }
+    }
+
+    private ModelRequest BuildRequest(List<ChatMessage> messages)
+    {
+        return new ModelRequest
+        {
+            Model = _options.Model,
+            SystemPrompt = _options.SystemPrompt,
+            Messages = messages,
+            Tools = _toolRegistry.GetToolDefinitions(),
+            MaxTokens = _options.MaxTokens,
+            Temperature = _options.Temperature
+        };
+    }
+
+    private static void PrintToolResult(string toolName, ToolResult result)
+    {
+        if (result.Ok)
+        {
+            Console.ForegroundColor = ConsoleColor.Green;
+            Console.WriteLine($"  [{toolName}] OK");
+        }
+        else
+        {
+            Console.ForegroundColor = ConsoleColor.Red;
+            Console.WriteLine($"  [{toolName}] FAILED: {result.Diagnostics?.FirstOrDefault()?.Message}");
+        }
+        Console.ResetColor();
+
+        if (!string.IsNullOrEmpty(result.Stdout))
+        {
+            var preview = TruncateString(result.Stdout, 200);
+            Console.ForegroundColor = ConsoleColor.DarkGray;
+            Console.WriteLine($"  stdout: {preview}");
+            Console.ResetColor();
+        }
+    }
+
+    private static string TruncateJson(string json, int maxLength)
+    {
+        if (json.Length <= maxLength) return json;
+        return json[..maxLength] + "...";
+    }
+
+    private static string TruncateString(string str, int maxLength)
+    {
+        var singleLine = str.Replace("\r", "").Replace("\n", " ");
+        if (singleLine.Length <= maxLength) return singleLine;
+        return singleLine[..maxLength] + "...";
+    }
+}
