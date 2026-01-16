@@ -1,6 +1,6 @@
-# Local Coding Agent
-
-A .NET 8 console-based coding agent that operates on local repositories, inspired by Claude Code. Supports both OpenAI and Anthropic as LLM providers with a provider-agnostic architecture.
+# ASDV (Agile Synthetic Dev Vibe)
+A .NET 8 console-based coding agent that operates on local repositories, inspired by Claude Code.  
+Supports both OpenAI and Anthropic as LLM providers with a provider-agnostic architecture.
 
 ## Features
 
