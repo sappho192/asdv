@@ -1,6 +1,7 @@
 using System.Runtime.CompilerServices;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Agent.Core.Events;
 using Agent.Core.Messages;
 using Agent.Core.Providers;
@@ -83,7 +84,7 @@ public class OpenAIProvider : IModelProvider
                 var root = doc!.RootElement;
 
                 // Handle usage information
-                if (root.TryGetProperty("usage", out var usageEl))
+                if (root.TryGetProperty("usage", out var usageEl) && usageEl.ValueKind != JsonValueKind.Null)
                 {
                     var promptTokens = usageEl.TryGetProperty("prompt_tokens", out var pt) ? pt.GetInt32() : 0;
                     var completionTokens = usageEl.TryGetProperty("completion_tokens", out var ct2) ? ct2.GetInt32() : 0;
@@ -125,22 +126,31 @@ public class OpenAIProvider : IModelProvider
                 {
                     foreach (var toolCall in toolCalls.EnumerateArray())
                     {
-                        var index = toolCall.GetProperty("index").GetInt32();
+                        if (!toolCall.TryGetProperty("index", out var indexEl))
+                            continue;
+
+                        var index = indexEl.GetInt32();
 
                         // New tool call
-                        if (toolCall.TryGetProperty("id", out var idEl))
+                        if (toolCall.TryGetProperty("id", out var idEl) && idEl.ValueKind != JsonValueKind.Null)
                         {
                             var callId = idEl.GetString()!;
-                            var function = toolCall.GetProperty("function");
-                            var toolName = function.GetProperty("name").GetString()!;
-
-                            toolCallBuffers[index] = new ToolCallBuffer(callId, toolName);
-                            yield return new ToolCallStarted(callId, toolName);
+                            if (toolCall.TryGetProperty("function", out var function) &&
+                                function.ValueKind != JsonValueKind.Null &&
+                                function.TryGetProperty("name", out var nameEl) &&
+                                nameEl.ValueKind != JsonValueKind.Null)
+                            {
+                                var toolName = nameEl.GetString()!;
+                                toolCallBuffers[index] = new ToolCallBuffer(callId, toolName);
+                                yield return new ToolCallStarted(callId, toolName);
+                            }
                         }
 
                         // Tool call arguments delta
                         if (toolCall.TryGetProperty("function", out var funcEl) &&
-                            funcEl.TryGetProperty("arguments", out var argsEl))
+                            funcEl.ValueKind != JsonValueKind.Null &&
+                            funcEl.TryGetProperty("arguments", out var argsEl) &&
+                            argsEl.ValueKind != JsonValueKind.Null)
                         {
                             var argsDelta = argsEl.GetString();
                             if (!string.IsNullOrEmpty(argsDelta) && toolCallBuffers.TryGetValue(index, out var buffer))
@@ -192,14 +202,15 @@ public class OpenAIProvider : IModelProvider
         {
             body["tools"] = request.Tools.Select(t =>
             {
-                JsonElement parameters;
+                JsonNode? parameters;
                 try
                 {
-                    parameters = JsonDocument.Parse(t.InputSchema).RootElement;
+                    // Parse to JsonNode to avoid JsonElement serialization issues
+                    parameters = JsonNode.Parse(t.InputSchema);
                 }
                 catch
                 {
-                    parameters = JsonDocument.Parse("{}").RootElement;
+                    parameters = JsonNode.Parse("{}");
                 }
 
                 return new

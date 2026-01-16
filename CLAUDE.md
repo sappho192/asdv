@@ -163,6 +163,7 @@ Task<PolicyDecision> EvaluateAsync(ITool tool, string argsJson)
 
 - `System.CommandLine` - CLI parsing
 - `System.Text.Json` - JSON serialization
+- `DotNetEnv` - .env file loading
 - `Microsoft.Extensions.FileSystemGlobbing` - Glob pattern matching
 - `FluentAssertions` - Test assertions
 - `Moq` - Mocking framework
@@ -174,3 +175,16 @@ Task<PolicyDecision> EvaluateAsync(ITool tool, string argsJson)
 | `ANTHROPIC_API_KEY` | Anthropic API authentication |
 | `OPENAI_API_KEY` | OpenAI API authentication |
 | `OPENAI_BASE_URL` | Custom OpenAI-compatible endpoint |
+
+**Note:** Environment variables can be loaded from a `.env` file in the repository root. The `.env` file is automatically loaded at startup.
+
+## CLI Options
+
+| Option | Alias | Description | Default |
+|--------|-------|-------------|---------|
+| `--repo` | `-r` | Repository root path | Current directory |
+| `--provider` | `-p` | LLM provider (openai\|anthropic) | anthropic |
+| `--model` | `-m` | Model name | Provider-specific |
+| `--yes` | `-y` | Auto-approve all tool calls | false |
+| `--session` | `-s` | Session log file path | Auto-generated |
+| `--max-iterations` | | Maximum agent iterations | 20 |
