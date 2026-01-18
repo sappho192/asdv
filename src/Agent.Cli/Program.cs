@@ -1,4 +1,6 @@
 using System.CommandLine;
+using System.Text.Json;
+using Agent.Cli;
 using Agent.Core.Approval;
 using Agent.Core.Logging;
 using Agent.Core.Orchestrator;
@@ -38,6 +40,10 @@ var sessionOption = new Option<string?>(
     aliases: ["--session", "-s"],
     description: "Session log file path");
 
+var sessionIdOption = new Option<string?>(
+    aliases: ["--session-id", "--sid"],
+    description: "Session ID for resume/new session (stored under .agent)");
+
 var maxIterationsOption = new Option<int>(
     aliases: ["--max-iterations"],
     getDefaultValue: () => 20,
@@ -48,9 +54,17 @@ var debugOption = new Option<bool>(
     getDefaultValue: () => false,
     description: "Enable debug output (stack traces, detailed errors)");
 
-var promptArgument = new Argument<string>(
+var onceOption = new Option<bool>(
+    aliases: ["--once"],
+    getDefaultValue: () => false,
+    description: "Run a single prompt and exit (non-interactive)");
+
+var promptArgument = new Argument<string?>(
     name: "prompt",
-    description: "Task prompt for the agent");
+    description: "Task prompt for the agent")
+{
+    Arity = ArgumentArity.ZeroOrOne
+};
 
 var rootCommand = new RootCommand("Local coding agent - Claude Code style")
 {
@@ -59,8 +73,10 @@ var rootCommand = new RootCommand("Local coding agent - Claude Code style")
     modelOption,
     autoApproveOption,
     sessionOption,
+    sessionIdOption,
     maxIterationsOption,
     debugOption,
+    onceOption,
     promptArgument
 };
 
@@ -71,13 +87,26 @@ rootCommand.SetHandler(async (context) =>
     var model = context.ParseResult.GetValueForOption(modelOption);
     var autoApprove = context.ParseResult.GetValueForOption(autoApproveOption);
     var session = context.ParseResult.GetValueForOption(sessionOption);
+    var sessionId = context.ParseResult.GetValueForOption(sessionIdOption);
     var maxIterations = context.ParseResult.GetValueForOption(maxIterationsOption);
     var debug = context.ParseResult.GetValueForOption(debugOption);
+    var once = context.ParseResult.GetValueForOption(onceOption);
     var prompt = context.ParseResult.GetValueForArgument(promptArgument);
 
     var ct = context.GetCancellationToken();
 
-    await RunAgentAsync(repo, provider, model, autoApprove, session, maxIterations, debug, prompt, ct);
+    await RunAgentAsync(
+        repo,
+        provider,
+        model,
+        autoApprove,
+        session,
+        sessionId,
+        maxIterations,
+        debug,
+        once,
+        prompt,
+        ct);
 });
 
 return await rootCommand.InvokeAsync(args);
@@ -88,9 +117,11 @@ static async Task RunAgentAsync(
     string? model,
     bool autoApprove,
     string? session,
+    string? sessionId,
     int maxIterations,
     bool debug,
-    string prompt,
+    bool once,
+    string? prompt,
     CancellationToken ct)
 {
     var repoRoot = Path.GetFullPath(repo);
@@ -135,9 +166,42 @@ static async Task RunAgentAsync(
     var approvalService = new ConsoleApprovalService();
     var policyEngine = new DefaultPolicyEngine(new PolicyOptions { AutoApprove = autoApprove });
 
+    if (once && string.IsNullOrWhiteSpace(prompt))
+    {
+        Console.ForegroundColor = ConsoleColor.Red;
+        Console.WriteLine("Error: Prompt is required in --once mode.");
+        Console.ResetColor();
+        return;
+    }
+
+    if (!string.IsNullOrWhiteSpace(session) && !string.IsNullOrWhiteSpace(sessionId))
+    {
+        Console.ForegroundColor = ConsoleColor.Red;
+        Console.WriteLine("Error: Use either --session or --session-id, not both.");
+        Console.ResetColor();
+        return;
+    }
+
+    sessionId ??= GenerateSessionId();
+
     // Create session logger
     var sessionPath = session ?? Path.Combine(
-        repoRoot, ".agent", $"session_{DateTime.Now:yyyyMMdd_HHmmss}.jsonl");
+        repoRoot, ".agent", $"session_{sessionId}.jsonl");
+
+    var resumed = File.Exists(sessionPath);
+    var messages = new List<Agent.Core.Messages.ChatMessage>();
+    if (resumed)
+    {
+        messages = SessionLogReader.LoadMessages(sessionPath, warning =>
+        {
+            if (debug)
+            {
+                Console.ForegroundColor = ConsoleColor.Yellow;
+                Console.WriteLine($"Warning: {warning}");
+                Console.ResetColor();
+            }
+        });
+    }
 
     ISessionLogger logger;
     try
@@ -175,6 +239,8 @@ static async Task RunAgentAsync(
     Console.WriteLine($"  Provider:   {provider}");
     Console.WriteLine($"  Model:      {model}");
     Console.WriteLine($"  Session:    {sessionPath}");
+    Console.WriteLine($"  Session ID: {sessionId}");
+    Console.WriteLine($"  Mode:       {(once ? "Once" : "REPL")}");
     Console.WriteLine($"  Auto-approve: {autoApprove}");
     Console.WriteLine();
     Console.ForegroundColor = ConsoleColor.DarkGray;
@@ -193,7 +259,80 @@ static async Task RunAgentAsync(
 
     try
     {
-        await orchestrator.RunAsync(prompt, ct);
+        await logger.LogAsync(new
+        {
+            type = "session_start",
+            sessionId,
+            sessionPath,
+            repoRoot,
+            provider,
+            model,
+            mode = once ? "once" : "repl",
+            resumed
+        });
+
+        await AppendSessionIndexAsync(repoRoot, new
+        {
+            type = "session",
+            sessionId,
+            action = resumed ? "resumed" : "created",
+            sessionPath,
+            repoRoot,
+            provider,
+            model,
+            mode = once ? "once" : "repl"
+        });
+
+        if (once)
+        {
+            if (!string.IsNullOrWhiteSpace(prompt))
+            {
+                await orchestrator.RunAsync(prompt, messages, ct);
+            }
+
+            return;
+        }
+
+        Console.ForegroundColor = ConsoleColor.DarkGray;
+        Console.WriteLine("REPL mode: type a prompt and press Enter. Use /exit to quit.");
+        Console.ResetColor();
+
+        if (!string.IsNullOrWhiteSpace(prompt))
+        {
+            await orchestrator.RunAsync(prompt, messages, ct);
+        }
+
+        while (true)
+        {
+            Console.ForegroundColor = ConsoleColor.Cyan;
+            Console.Write("> ");
+            Console.ResetColor();
+            var input = Console.ReadLine();
+
+            if (input == null)
+            {
+                break;
+            }
+
+            if (string.Equals(input, "/exit", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(input, "/quit", StringComparison.OrdinalIgnoreCase))
+            {
+                break;
+            }
+
+            if (string.Equals(input, "/help", StringComparison.OrdinalIgnoreCase))
+            {
+                Console.WriteLine("Commands: /exit, /quit, /help");
+                continue;
+            }
+
+            if (string.IsNullOrWhiteSpace(input))
+            {
+                continue;
+            }
+
+            await orchestrator.RunAsync(input, messages, ct);
+        }
     }
     catch (OperationCanceledException)
     {
@@ -318,4 +457,35 @@ static string GetSystemPrompt()
 
         Keep patches minimal and focused on the specific change needed.
         """;
+}
+
+static string GenerateSessionId()
+{
+    var suffix = Guid.NewGuid().ToString("N")[..8];
+    return $"{DateTime.UtcNow:yyyyMMddHHmmss}_{suffix}";
+}
+
+static async Task AppendSessionIndexAsync(string repoRoot, object entry)
+{
+    var indexPath = Path.Combine(repoRoot, ".agent", "sessions.jsonl");
+    var dir = Path.GetDirectoryName(indexPath);
+    if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir))
+    {
+        Directory.CreateDirectory(dir);
+    }
+
+    var options = new JsonSerializerOptions
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        WriteIndented = false,
+        DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull
+    };
+
+    var line = JsonSerializer.Serialize(new
+    {
+        timestamp = DateTimeOffset.UtcNow,
+        data = entry
+    }, options);
+
+    await File.AppendAllTextAsync(indexPath, line + Environment.NewLine);
 }

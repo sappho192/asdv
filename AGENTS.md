@@ -21,14 +21,21 @@ The orchestrator (`Agent.Core/Orchestrator/AgentOrchestrator.cs`) is the central
 ```csharp
 public class AgentOrchestrator
 {
-    public async Task RunAsync(string userPrompt, CancellationToken ct = default)
+    public async Task RunAsync(
+        string userPrompt,
+        List<ChatMessage>? messages = null,
+        CancellationToken ct = default)
     {
-        // 1. Initialize conversation with user message
-        // 2. Loop: Stream from model -> Process events -> Execute tools
-        // 3. Exit on completion or max iterations
+        // 1. Initialize or resume conversation
+        // 2. Add user message to conversation
+        // 3. Loop: Stream from model -> Process events -> Execute tools
+        // 4. Log all messages to session logger
+        // 5. Exit on completion or max iterations
     }
 }
 ```
+
+**Session Resumption**: The orchestrator can now accept a list of previous messages to resume conversations. This enables REPL mode and session persistence.
 
 ### Event Model
 
@@ -223,10 +230,29 @@ public interface ISessionLogger : IAsyncDisposable
 ### Log Entry Format
 
 ```json
+{"timestamp":"2024-01-15T10:30:00Z","data":{"type":"session_start","sessionId":"abc123","mode":"repl","resumed":false}}
 {"timestamp":"2024-01-15T10:30:00Z","data":{"type":"user_prompt","content":"..."}}
+{"timestamp":"2024-01-15T10:30:00Z","data":{"type":"message","role":"user","content":"..."}}
 {"timestamp":"2024-01-15T10:30:01Z","data":{"type":"event","eventType":"TextDelta",...}}
-{"timestamp":"2024-01-15T10:30:02Z","data":{"type":"tool_result","callId":"...",...}}
+{"timestamp":"2024-01-15T10:30:02Z","data":{"type":"message","role":"assistant","content":"...","toolCalls":[...]}}
+{"timestamp":"2024-01-15T10:30:03Z","data":{"type":"message","role":"tool","callId":"...","result":{...}}}
 ```
+
+### Session Resumption
+
+The `SessionLogReader` class (`Agent.Cli/SessionLogReader.cs`) can parse session logs and reconstruct the conversation history:
+
+```csharp
+var messages = SessionLogReader.LoadMessages(sessionPath, warning =>
+{
+    Console.WriteLine($"Warning: {warning}");
+});
+```
+
+This enables:
+- Resuming conversations across CLI invocations
+- REPL mode with persistent context
+- Debugging and replay of agent sessions
 
 ## Error Handling
 
