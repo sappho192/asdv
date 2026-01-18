@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <RootNamespace>Agent.Server</RootNamespace>
+    <AssemblyName>agent-server</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Agent.Core\Agent.Core.csproj" />
+    <ProjectReference Include="..\Agent.Tools\Agent.Tools.csproj" />
+    <ProjectReference Include="..\Agent.Workspace\Agent.Workspace.csproj" />
+    <ProjectReference Include="..\Agent.Logging\Agent.Logging.csproj" />
+    <ProjectReference Include="..\Agent.Llm.Anthropic\Agent.Llm.Anthropic.csproj" />
+    <ProjectReference Include="..\Agent.Llm.OpenAI\Agent.Llm.OpenAI.csproj" />
+  </ItemGroup>
+
+</Project>
