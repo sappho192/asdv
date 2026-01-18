@@ -82,9 +82,13 @@ src/
   Agent.Tools/         # Tool implementations
   Agent.Workspace/     # File system safety
   Agent.Logging/       # JSONL session logging
+  Agent.Server/        # HTTP API server for agent sessions
 tests/
   Agent.Core.Tests/
   Agent.Tools.Tests/
+  Agent.Server.Tests/
+scripts/
+  server-client.mjs    # Node.js client for Agent.Server
 ```
 
 ### Available Tools
@@ -176,6 +180,47 @@ Agent.Cli
   └── Agent.Llm.OpenAI
   └── Agent.Logging
 ```
+
+## Agent.Server
+
+`Agent.Server` is an HTTP API server that exposes agent functionality over REST + Server-Sent Events (SSE).
+
+### Running the Server
+
+```bash
+dotnet run --project src/Agent.Server
+```
+
+By default, the server runs on `http://localhost:5000`.
+
+### Using the Node.js Client
+
+```bash
+# Install Node.js (v18+)
+# Run the interactive client
+node scripts/server-client.mjs --workspace /path/to/repo --provider openai
+
+# Resume a session
+node scripts/server-client.mjs --session <sessionId> --workspace /path/to/repo
+```
+
+### API Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/sessions` | POST | Create a new session |
+| `/api/sessions/{id}` | GET | Get session info |
+| `/api/sessions/{id}/chat` | POST | Send a message to the agent |
+| `/api/sessions/{id}/stream` | GET | Stream agent events (SSE) |
+| `/api/sessions/{id}/approvals/{callId}` | POST | Approve/deny a tool call |
+| `/api/sessions/{id}/resume` | POST | Resume a session from log file |
+
+### Features
+
+- **Server-Sent Events (SSE)**: Real-time streaming of agent responses
+- **Session management**: Multiple concurrent agent sessions
+- **Approval workflow**: Interactive approval of dangerous tool calls
+- **Session resumption**: Resume conversations from JSONL logs
 
 ## Documentation
 

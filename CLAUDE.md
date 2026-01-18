@@ -33,6 +33,13 @@ dotnet run --project src/Agent.Cli -- -p anthropic "your prompt"
 
 # Run with debug output (shows stack traces and detailed errors)
 dotnet run --project src/Agent.Cli -- -d "your prompt"
+
+# Run the HTTP API server
+dotnet run --project src/Agent.Server
+
+# Use the Node.js client (requires Node.js 18+)
+node scripts/server-client.mjs --workspace /path/to/repo --provider openai
+node scripts/server-client.mjs --session <sessionId> --workspace /path/to/repo
 ```
 
 ## Project Structure
@@ -56,9 +63,16 @@ src/
   Agent.Llm.Anthropic/ # Claude provider with SSE streaming
   Agent.Llm.OpenAI/    # OpenAI provider with SSE streaming
   Agent.Logging/       # JsonlSessionLogger implementation
+  Agent.Server/        # HTTP API server for agent sessions
+    Program.cs         # ASP.NET Core web host and API endpoints
+    Models/            # Request/response models and server events
+    Services/          # Session management, approval, and runtime services
 tests/
   Agent.Core.Tests/    # Core component tests
   Agent.Tools.Tests/   # Tool implementation tests
+  Agent.Server.Tests/  # Server component tests
+scripts/
+  server-client.mjs    # Node.js interactive client for Agent.Server
 docs/
   DESIGN.md            # Design principles and architecture
   IMPLEMENTATION.md    # Detailed implementation guide

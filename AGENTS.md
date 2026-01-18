@@ -315,3 +315,112 @@ public async Task Provider_StreamsEvents()
 3. **Memory**: Don't buffer entire responses; process events as they arrive
 4. **Timeouts**: Set appropriate timeouts for HTTP and subprocess calls
 5. **Output limits**: Truncate large tool outputs to prevent context explosion
+
+## Agent.Server Architecture
+
+`Agent.Server` is an ASP.NET Core web application that exposes agent functionality over HTTP with Server-Sent Events (SSE) for streaming.
+
+### Key Components
+
+#### Session Management (`InMemorySessionStore`)
+
+Manages concurrent agent sessions with thread-safe access:
+
+```csharp
+public interface ISessionStore
+{
+    SessionRuntime Create(CreateSessionRequest request);
+    bool TryAdd(SessionRuntime session);
+    bool TryGet(string id, out SessionRuntime session);
+}
+```
+
+#### Session Runtime (`SessionRuntime`)
+
+Encapsulates a running agent session:
+
+- **AgentOrchestrator**: Core agent logic
+- **ServerApprovalService**: Handles async approval requests
+- **Event channel**: Broadcasts server events to SSE clients
+- **Stream lock**: Ensures only one SSE connection per session
+
+#### Server Events (`ServerEvent`)
+
+Standardized event format for SSE streaming:
+
+| Event Type | Description |
+|------------|-------------|
+| `text_delta` | Streamed text from model |
+| `tool_call` | Tool invocation started |
+| `tool_result` | Tool execution completed |
+| `approval_required` | Waiting for user approval |
+| `completed` | Agent iteration finished |
+| `error` | Error occurred |
+| `trace` | Debug/diagnostic information |
+
+#### Approval Service (`ServerApprovalService`)
+
+Non-blocking approval workflow using `TaskCompletionSource`:
+
+```csharp
+public class ServerApprovalService : IApprovalService
+{
+    public async Task<bool> RequestApprovalAsync(string callId, ITool tool, string argsJson)
+    {
+        // 1. Emit approval_required event
+        // 2. Create TaskCompletionSource for this callId
+        // 3. Wait for client to POST to /api/sessions/{id}/approvals/{callId}
+        // 4. Return approval decision
+    }
+}
+```
+
+### API Workflow
+
+1. **Create Session**: `POST /api/sessions` → Creates runtime, returns session ID
+2. **Connect SSE**: `GET /api/sessions/{id}/stream` → Opens event stream
+3. **Send Message**: `POST /api/sessions/{id}/chat` → Triggers agent loop
+4. **Stream Events**: Server pushes events via SSE as agent processes
+5. **Handle Approvals**: Client posts approval decision when prompted
+6. **Repeat**: Client sends more messages as needed
+
+### Session Resumption
+
+The server supports resuming sessions from JSONL logs:
+
+```csharp
+POST /api/sessions/{id}/resume
+{
+  "workspacePath": "/path/to/repo",
+  "provider": "openai",
+  "model": "gpt-5-mini"
+}
+```
+
+The `SessionLogReader` parses the log file and reconstructs the conversation history, enabling stateless server restarts while preserving context.
+
+### Client Implementation
+
+The `server-client.mjs` script demonstrates:
+
+- Creating/resuming sessions
+- SSE stream parsing
+- Interactive approval handling
+- REPL-style user interaction
+
+### Adding New Server Features
+
+To add a new server capability:
+
+1. **Define the event**: Add to `ServerEvent` in `Models/ServerEvents.cs`
+2. **Emit from runtime**: Update `SessionRunner` to broadcast the event
+3. **Handle in client**: Add case to `handleEvent()` in client script
+4. **Test**: Add test case in `Agent.Server.Tests`
+
+### Server Configuration
+
+Environment variables:
+
+- `ASPNETCORE_URLS`: Server bind address (default: `http://localhost:5000`)
+- `ANTHROPIC_API_KEY` / `OPENAI_API_KEY`: LLM provider credentials
+- `OPENAI_BASE_URL`: Custom OpenAI-compatible endpoint
