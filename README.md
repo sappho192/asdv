@@ -34,20 +34,26 @@ export ANTHROPIC_API_KEY=your_key_here
 # or
 export OPENAI_API_KEY=your_key_here
 
-# Run with default settings (OpenAI, REPL mode by default)
-dotnet run --project src/Agent.Cli --
+# Run in REPL mode (default - interactive, multi-turn conversations)
+dotnet run --project src/Agent.Cli
 
-# Run a single prompt and exit
-dotnet run --project src/Agent.Cli -- --once -p openai "Fix the bug in Program.cs"
+# Run in REPL mode with an initial prompt
+dotnet run --project src/Agent.Cli -- "Fix the bug in Program.cs"
 
-# Resume a session by ID (REPL)
-dotnet run --project src/Agent.Cli -- --session-id <sessionId>
+# Run a single prompt and exit (--once mode)
+dotnet run --project src/Agent.Cli -- --once "Add unit tests for Calculator.cs"
+
+# Resume a previous session by ID (REPL mode)
+dotnet run --project src/Agent.Cli -- --session-id abc123def456
+
+# Start a new session with a specific ID
+dotnet run --project src/Agent.Cli -- --session-id my-feature-work "Implement new API endpoint"
 
 # Run with auto-approve (use with caution)
-dotnet run --project src/Agent.Cli -- -y "Add unit tests for Calculator.cs"
+dotnet run --project src/Agent.Cli -- -y "Refactor the authentication module"
 
-# Specify repository path
-dotnet run --project src/Agent.Cli -- -r /path/to/repo "Refactor the authentication module"
+# Specify repository path and provider
+dotnet run --project src/Agent.Cli -- -r /path/to/repo -p anthropic "Review the codebase"
 ```
 
 ### CLI Options
@@ -117,7 +123,17 @@ Session logs are saved in JSONL format to `.agent/session_<sessionId>.jsonl` by 
 - Message snapshots (for replay/resume)
 - Timestamps
 
-Use `--session-id` (or `--session`) to resume a conversation from the same log file (they are mutually exclusive). An index of sessions is also appended to `.agent/sessions.jsonl` for debugging and discovery.
+### Session Management
+
+- **`--session-id <id>`**: Create or resume a session with the specified ID. Sessions are stored as `.agent/session_<id>.jsonl`
+- **`--session <path>`**: Specify a custom path for the session log file (mutually exclusive with `--session-id`)
+- **Session index**: All sessions are tracked in `.agent/sessions.jsonl` for discovery and debugging
+- **Resumption**: When you resume a session with `--session-id`, the agent loads all previous messages and continues the conversation
+
+### REPL vs. Once Mode
+
+- **REPL mode (default)**: Interactive mode where you can have multi-turn conversations. The agent waits for your input after completing each task. Use `/exit` to quit.
+- **Once mode (`--once`)**: Non-interactive mode that runs a single prompt and exits. Useful for scripts and automation.
 
 ## Safety Features
 

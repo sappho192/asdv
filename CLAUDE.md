@@ -15,15 +15,24 @@ dotnet build
 # Run all tests
 dotnet test
 
-# Run the agent
+# Run the agent in REPL mode (interactive)
+dotnet run --project src/Agent.Cli
+
+# Run the agent with an initial prompt (REPL mode)
 dotnet run --project src/Agent.Cli -- "your prompt here"
+
+# Run a single prompt and exit (once mode)
+dotnet run --project src/Agent.Cli -- --once "your prompt"
+
+# Resume a previous session
+dotnet run --project src/Agent.Cli -- --session-id <sessionId>
 
 # Run with specific provider
 dotnet run --project src/Agent.Cli -- -p openai "your prompt"
 dotnet run --project src/Agent.Cli -- -p anthropic "your prompt"
 
 # Run with debug output (shows stack traces and detailed errors)
-dotnet run --project src/Agent.Cli -- -d -p openai "your prompt"
+dotnet run --project src/Agent.Cli -- -d "your prompt"
 ```
 
 ## Project Structure
@@ -31,6 +40,8 @@ dotnet run --project src/Agent.Cli -- -d -p openai "your prompt"
 ```
 src/
   Agent.Cli/           # Entry point, CLI argument parsing
+    Program.cs         # Main entry point, CLI options, REPL loop
+    SessionLogReader.cs # Session log parsing and message loading
   Agent.Core/          # Core interfaces, events, orchestrator
     Events/            # AgentEvent types (TextDelta, ToolCallReady, etc.)
     Messages/          # ChatMessage types (UserMessage, AssistantMessage, etc.)
@@ -158,9 +169,12 @@ Task<PolicyDecision> EvaluateAsync(ITool tool, string argsJson)
 ## Debugging Tips
 
 1. **Session logs**: Check `.agent/session_*.jsonl` for full event history
-2. **Provider issues**: Look for `TraceEvent` in the event stream
-3. **Tool failures**: Check `ToolResult.Diagnostics` for error details
-4. **Path issues**: Verify `IWorkspace.ResolvePath()` returns non-null
+2. **Session index**: Review `.agent/sessions.jsonl` to find session IDs and metadata
+3. **Resume sessions**: Use `--session-id` to resume and inspect problematic sessions
+4. **Provider issues**: Look for `TraceEvent` in the event stream
+5. **Tool failures**: Check `ToolResult.Diagnostics` for error details
+6. **Path issues**: Verify `IWorkspace.ResolvePath()` returns non-null
+7. **Debug mode**: Use `--debug` flag to see stack traces and detailed errors
 
 ## Dependencies
 
@@ -190,5 +204,9 @@ Task<PolicyDecision> EvaluateAsync(ITool tool, string argsJson)
 | `--model` | `-m` | Model name | Provider-specific |
 | `--yes` | `-y` | Auto-approve all tool calls | false |
 | `--session` | `-s` | Session log file path | Auto-generated |
+| `--session-id` | `--sid` | Session ID for resume/new session | Auto-generated |
+| `--once` | | Run a single prompt and exit | false |
 | `--max-iterations` | | Maximum agent iterations | 20 |
 | `--debug` | `-d` | Enable debug output (stack traces) | false |
+
+**Note:** `--session` and `--session-id` are mutually exclusive. Use `--session` for custom paths, `--session-id` for managed sessions under `.agent/`.
