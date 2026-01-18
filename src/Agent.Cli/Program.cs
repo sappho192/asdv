@@ -1,6 +1,7 @@
 using System.CommandLine;
 using System.Text.Json;
 using Agent.Cli;
+using Agent.Core.Config;
 using Agent.Core.Approval;
 using Agent.Core.Logging;
 using Agent.Core.Orchestrator;
@@ -22,14 +23,17 @@ var repoOption = new Option<string>(
     getDefaultValue: () => Environment.CurrentDirectory,
     description: "Repository root path");
 
-var providerOption = new Option<string>(
+var providerOption = new Option<string?>(
     aliases: ["--provider", "-p"],
-    getDefaultValue: () => "openai",
-    description: "LLM provider (openai|anthropic)");
+    description: "LLM provider (openai|anthropic|openai-compatible)");
 
 var modelOption = new Option<string?>(
     aliases: ["--model", "-m"],
     description: "Model name (default: provider-specific)");
+
+var configOption = new Option<string?>(
+    aliases: ["--config", "-c"],
+    description: "Path to YAML config (default: asdv.yaml in repo root)");
 
 var autoApproveOption = new Option<bool>(
     aliases: ["--yes", "-y"],
@@ -77,13 +81,14 @@ var rootCommand = new RootCommand("ASDV - Claude Code style")
     maxIterationsOption,
     debugOption,
     onceOption,
+    configOption,
     promptArgument
 };
 
 rootCommand.SetHandler(async (context) =>
 {
     var repo = context.ParseResult.GetValueForOption(repoOption)!;
-    var provider = context.ParseResult.GetValueForOption(providerOption)!;
+    var provider = context.ParseResult.GetValueForOption(providerOption);
     var model = context.ParseResult.GetValueForOption(modelOption);
     var autoApprove = context.ParseResult.GetValueForOption(autoApproveOption);
     var session = context.ParseResult.GetValueForOption(sessionOption);
@@ -91,6 +96,7 @@ rootCommand.SetHandler(async (context) =>
     var maxIterations = context.ParseResult.GetValueForOption(maxIterationsOption);
     var debug = context.ParseResult.GetValueForOption(debugOption);
     var once = context.ParseResult.GetValueForOption(onceOption);
+    var config = context.ParseResult.GetValueForOption(configOption);
     var prompt = context.ParseResult.GetValueForArgument(promptArgument);
 
     var ct = context.GetCancellationToken();
@@ -105,6 +111,7 @@ rootCommand.SetHandler(async (context) =>
         maxIterations,
         debug,
         once,
+        config,
         prompt,
         ct);
 });
@@ -113,7 +120,7 @@ return await rootCommand.InvokeAsync(args);
 
 static async Task RunAgentAsync(
     string repo,
-    string provider,
+    string? provider,
     string? model,
     bool autoApprove,
     string? session,
@@ -121,6 +128,7 @@ static async Task RunAgentAsync(
     int maxIterations,
     bool debug,
     bool once,
+    string? config,
     string? prompt,
     CancellationToken ct)
 {
@@ -134,19 +142,39 @@ static async Task RunAgentAsync(
         return;
     }
 
-    // Determine model
-    model ??= provider.ToLowerInvariant() switch
+    AppConfig? appConfig;
+    try
     {
-        "anthropic" => "claude-sonnet-4-20250514",
-        "openai" => "gpt-5-mini",
-        _ => throw new ArgumentException($"Unknown provider: {provider}")
-    };
+        appConfig = LoadAppConfig(repoRoot, config, debug);
+    }
+    catch (Exception ex)
+    {
+        Console.ForegroundColor = ConsoleColor.Red;
+        Console.WriteLine($"Error: {ex.Message}");
+        Console.ResetColor();
+        return;
+    }
+
+    string resolvedProvider;
+    string resolvedModel;
+    try
+    {
+        resolvedProvider = ResolveProvider(provider, appConfig);
+        resolvedModel = ResolveModel(resolvedProvider, model, appConfig);
+    }
+    catch (Exception ex)
+    {
+        Console.ForegroundColor = ConsoleColor.Red;
+        Console.WriteLine($"Error: {ex.Message}");
+        Console.ResetColor();
+        return;
+    }
 
     // Create provider
     IModelProvider modelProvider;
     try
     {
-        modelProvider = CreateProvider(provider, model);
+        modelProvider = CreateProvider(resolvedProvider, appConfig);
     }
     catch (Exception ex)
     {
@@ -221,7 +249,7 @@ static async Task RunAgentAsync(
     var options = new AgentOptions
     {
         RepoRoot = repoRoot,
-        Model = model,
+        Model = resolvedModel,
         Workspace = workspace,
         MaxIterations = maxIterations,
         MaxTokens = 4096,
@@ -236,8 +264,8 @@ static async Task RunAgentAsync(
     Console.ResetColor();
     Console.WriteLine();
     Console.WriteLine($"  Repository: {repoRoot}");
-    Console.WriteLine($"  Provider:   {provider}");
-    Console.WriteLine($"  Model:      {model}");
+    Console.WriteLine($"  Provider:   {resolvedProvider}");
+    Console.WriteLine($"  Model:      {resolvedModel}");
     Console.WriteLine($"  Session:    {sessionPath}");
     Console.WriteLine($"  Session ID: {sessionId}");
     Console.WriteLine($"  Mode:       {(once ? "Once" : "REPL")}");
@@ -265,8 +293,8 @@ static async Task RunAgentAsync(
             sessionId,
             sessionPath,
             repoRoot,
-            provider,
-            model,
+            provider = resolvedProvider,
+            model = resolvedModel,
             mode = once ? "once" : "repl",
             resumed
         });
@@ -278,8 +306,8 @@ static async Task RunAgentAsync(
             action = resumed ? "resumed" : "created",
             sessionPath,
             repoRoot,
-            provider,
-            model,
+            provider = resolvedProvider,
+            model = resolvedModel,
             mode = once ? "once" : "repl"
         });
 
@@ -367,7 +395,7 @@ static async Task RunAgentAsync(
     }
 }
 
-static IModelProvider CreateProvider(string provider, string model)
+static IModelProvider CreateProvider(string provider, AppConfig? appConfig)
 {
     var httpClient = new HttpClient
     {
@@ -382,15 +410,106 @@ static IModelProvider CreateProvider(string provider, string model)
                 ?? throw new InvalidOperationException(
                     "ANTHROPIC_API_KEY environment variable is not set")),
 
-        "openai" => new OpenAIProvider(
+        "openai" => CreateOpenAIProvider(
             httpClient,
-            Environment.GetEnvironmentVariable("OPENAI_API_KEY")
-                ?? throw new InvalidOperationException(
-                    "OPENAI_API_KEY environment variable is not set"),
-            Environment.GetEnvironmentVariable("OPENAI_BASE_URL")),
+            Environment.GetEnvironmentVariable("OPENAI_BASE_URL"),
+            requireApiKey: true),
 
-        _ => throw new ArgumentException($"Unknown provider: {provider}. Use 'openai' or 'anthropic'.")
+        "openai-compatible" => CreateOpenAIProvider(
+            httpClient,
+            GetRequiredOpenAICompatibleEndpoint(appConfig),
+            requireApiKey: false),
+
+        _ => throw new ArgumentException(
+            $"Unknown provider: {provider}. Use 'openai', 'anthropic', or 'openai-compatible'.")
     };
+}
+
+static OpenAIProvider CreateOpenAIProvider(
+    HttpClient httpClient,
+    string? baseUrl,
+    bool requireApiKey)
+{
+    var apiKey = Environment.GetEnvironmentVariable("OPENAI_API_KEY");
+
+    if (requireApiKey && string.IsNullOrWhiteSpace(apiKey))
+    {
+        throw new InvalidOperationException("OPENAI_API_KEY environment variable is not set");
+    }
+
+    return new OpenAIProvider(httpClient, apiKey, baseUrl);
+}
+
+static string ResolveProvider(string? provider, AppConfig? appConfig)
+{
+    var resolved = !string.IsNullOrWhiteSpace(provider)
+        ? provider
+        : appConfig?.Provider;
+
+    return string.IsNullOrWhiteSpace(resolved) ? "openai" : resolved.Trim().ToLowerInvariant();
+}
+
+static string ResolveModel(string provider, string? model, AppConfig? appConfig)
+{
+    if (!string.IsNullOrWhiteSpace(model))
+    {
+        return model.Trim();
+    }
+
+    if (!string.IsNullOrWhiteSpace(appConfig?.Model))
+    {
+        return appConfig!.Model!.Trim();
+    }
+
+    return provider switch
+    {
+        "anthropic" => "claude-sonnet-4-20250514",
+        "openai" => "gpt-5-mini",
+        "openai-compatible" => throw new ArgumentException(
+            "Model is required for openai-compatible provider. Set --model or model in asdv.yaml."),
+        _ => throw new ArgumentException(
+            $"Unknown provider: {provider}. Use 'openai', 'anthropic', or 'openai-compatible'.")
+    };
+}
+
+static string GetRequiredOpenAICompatibleEndpoint(AppConfig? appConfig)
+{
+    var endpoint = appConfig?.OpenAICompatibleEndpoint;
+    if (string.IsNullOrWhiteSpace(endpoint))
+    {
+        throw new ArgumentException(
+            "OpenAI-compatible endpoint is required. Set openaiCompatibleEndpoint in asdv.yaml.");
+    }
+
+    return endpoint.Trim();
+}
+
+static AppConfig? LoadAppConfig(string repoRoot, string? configPath, bool debug)
+{
+    var path = string.IsNullOrWhiteSpace(configPath)
+        ? Path.Combine(repoRoot, "asdv.yaml")
+        : Path.GetFullPath(configPath);
+
+    try
+    {
+        return AppConfigLoader.LoadIfExists(path);
+    }
+    catch (Exception ex)
+    {
+        if (!string.IsNullOrWhiteSpace(configPath))
+        {
+            throw;
+        }
+
+        if (debug)
+        {
+            Console.ForegroundColor = ConsoleColor.Yellow;
+            Console.WriteLine($"Warning: Could not load config: {ex.Message}");
+            Console.ResetColor();
+        }
+
+        return null;
+    }
 }
 
 static ToolRegistry CreateToolRegistry()

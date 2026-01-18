@@ -12,16 +12,16 @@ namespace Agent.Llm.OpenAI;
 public class OpenAIProvider : IModelProvider
 {
     private readonly HttpClient _httpClient;
-    private readonly string _apiKey;
+    private readonly string? _apiKey;
     private readonly string _baseUrl;
 
     public string Name => "openai";
 
-    public OpenAIProvider(HttpClient httpClient, string apiKey, string? baseUrl = null)
+    public OpenAIProvider(HttpClient httpClient, string? apiKey, string? baseUrl = null)
     {
         _httpClient = httpClient;
         _apiKey = apiKey;
-        _baseUrl = baseUrl ?? "https://api.openai.com/v1";
+        _baseUrl = string.IsNullOrWhiteSpace(baseUrl) ? "https://api.openai.com/v1" : baseUrl;
     }
 
     public async IAsyncEnumerable<AgentEvent> StreamAsync(
@@ -232,12 +232,15 @@ public class OpenAIProvider : IModelProvider
             DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull
         });
 
-        var httpRequest = new HttpRequestMessage(HttpMethod.Post, $"{_baseUrl}/chat/completions")
+        var httpRequest = new HttpRequestMessage(HttpMethod.Post, BuildChatCompletionsUrl(_baseUrl))
         {
             Content = new StringContent(json, Encoding.UTF8, "application/json")
         };
 
-        httpRequest.Headers.Add("Authorization", $"Bearer {_apiKey}");
+        if (!string.IsNullOrWhiteSpace(_apiKey))
+        {
+            httpRequest.Headers.Add("Authorization", $"Bearer {_apiKey}");
+        }
 
         return httpRequest;
     }
@@ -324,6 +327,22 @@ public class OpenAIProvider : IModelProvider
         }
 
         return stdout ?? "OK";
+    }
+
+    private static string BuildChatCompletionsUrl(string baseUrl)
+    {
+        var trimmed = baseUrl.TrimEnd('/');
+        if (trimmed.EndsWith("/chat/completions", StringComparison.OrdinalIgnoreCase))
+        {
+            return trimmed;
+        }
+
+        if (trimmed.EndsWith("/v1", StringComparison.OrdinalIgnoreCase))
+        {
+            return $"{trimmed}/chat/completions";
+        }
+
+        return $"{trimmed}/v1/chat/completions";
     }
 
     private class ToolCallBuffer

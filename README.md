@@ -1,10 +1,10 @@
 # ASDV (Agile Synthetic Dev Vibe)
 A .NET 8 console-based coding agent that operates on local repositories, inspired by Claude Code.  
-Supports both OpenAI and Anthropic as LLM providers with a provider-agnostic architecture.
+ Supports OpenAI, Anthropic, and OpenAI-compatible endpoints with a provider-agnostic architecture.
 
 ## Features
 
-- **Provider-agnostic**: Switch between OpenAI and Anthropic with a single flag
+- **Provider-agnostic**: Switch between OpenAI, Anthropic, and OpenAI-compatible endpoints
 - **Streaming**: Real-time streaming of model responses via SSE
 - **Tool system**: Extensible tools for file operations, search, git, and command execution
 - **Policy-based approval**: Dangerous operations require user approval
@@ -16,7 +16,7 @@ Supports both OpenAI and Anthropic as LLM providers with a provider-agnostic arc
 ### Prerequisites
 
 - .NET 8.0 SDK or later
-- An API key for OpenAI or Anthropic
+- An API key for OpenAI or Anthropic (not required for local OpenAI-compatible endpoints)
 
 ### Installation
 
@@ -54,6 +54,9 @@ dotnet run --project src/Agent.Cli -- -y "Refactor the authentication module"
 
 # Specify repository path and provider
 dotnet run --project src/Agent.Cli -- -r /path/to/repo -p anthropic "Review the codebase"
+
+# Use OpenAI-compatible endpoint via config
+dotnet run --project src/Agent.Cli -- -r /path/to/repo -p openai-compatible
 ```
 
 ### CLI Options
@@ -61,8 +64,9 @@ dotnet run --project src/Agent.Cli -- -r /path/to/repo -p anthropic "Review the 
 | Option | Alias | Description | Default |
 |--------|-------|-------------|---------|
 | `--repo` | `-r` | Repository root path | Current directory |
-| `--provider` | `-p` | LLM provider (`openai` or `anthropic`) | `openai` |
+| `--provider` | `-p` | LLM provider (`openai`, `anthropic`, `openai-compatible`) | `openai` |
 | `--model` | `-m` | Model name | Provider-specific |
+| `--config` | `-c` | YAML config path (default: `asdv.yaml` in repo root) | None |
 | `--yes` | `-y` | Auto-approve all tool calls | `false` |
 | `--session` | `-s` | Session log file path | Auto-generated |
 | `--session-id` | `--sid` | Session ID for resume/new session | Auto-generated |
@@ -111,12 +115,22 @@ scripts/
 |----------|-------------|
 | `ANTHROPIC_API_KEY` | API key for Anthropic Claude |
 | `OPENAI_API_KEY` | API key for OpenAI |
-| `OPENAI_BASE_URL` | Custom base URL for OpenAI-compatible APIs |
+| `OPENAI_BASE_URL` | Custom base URL for OpenAI (optional) |
 
 ### Default Models
 
 - **Anthropic**: `claude-sonnet-4-20250514`
 - **OpenAI**: `gpt-5-mini`
+
+### YAML Config (asdv.yaml)
+
+You can define default settings in `asdv.yaml` at the repo root and run without extra flags:
+
+```yaml
+provider: openai-compatible
+model: gpt-oss-20b
+openaiCompatibleEndpoint: http://127.0.0.1:8080
+```
 
 ## Session Logs
 

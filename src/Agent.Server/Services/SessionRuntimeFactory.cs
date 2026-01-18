@@ -4,6 +4,7 @@ using Agent.Core.Orchestrator;
 using Agent.Core.Policy;
 using Agent.Core.Providers;
 using Agent.Core.Tools;
+using Agent.Core.Config;
 using Agent.Logging;
 using Agent.Llm.Anthropic;
 using Agent.Llm.OpenAI;
@@ -52,21 +53,15 @@ public sealed class SessionRuntimeFactory
             throw new ArgumentException("WorkspacePath is required.");
         }
 
-        if (string.IsNullOrWhiteSpace(request.Provider))
-        {
-            throw new ArgumentException("Provider is required.");
-        }
-
         var repoRoot = Path.GetFullPath(request.WorkspacePath);
         if (!Directory.Exists(repoRoot))
         {
             throw new ArgumentException($"Workspace path does not exist: {repoRoot}");
         }
 
-        var provider = request.Provider.Trim().ToLowerInvariant();
-        var model = string.IsNullOrWhiteSpace(request.Model)
-            ? GetDefaultModel(provider)
-            : request.Model.Trim();
+        var appConfig = LoadAppConfig(repoRoot);
+        var provider = ResolveProvider(request.Provider, appConfig);
+        var model = ResolveModel(provider, request.Model, appConfig);
 
         sessionId ??= Guid.NewGuid().ToString("n");
         var info = new SessionInfo(
@@ -78,7 +73,7 @@ public sealed class SessionRuntimeFactory
 
         var workspace = new LocalWorkspace(repoRoot);
         var toolRegistry = CreateToolRegistry();
-        var modelProvider = CreateProvider(provider);
+        var modelProvider = CreateProvider(provider, appConfig);
         var policyEngine = new DefaultPolicyEngine(new PolicyOptions { AutoApprove = false });
 
         var logger = CreateLogger(repoRoot, sessionId);
@@ -110,17 +105,7 @@ public sealed class SessionRuntimeFactory
         return runtime;
     }
 
-    private static string GetDefaultModel(string provider)
-    {
-        return provider switch
-        {
-            "anthropic" => "claude-sonnet-4-20250514",
-            "openai" => "gpt-5-mini",
-            _ => throw new ArgumentException($"Unknown provider: {provider}")
-        };
-    }
-
-    private static IModelProvider CreateProvider(string provider)
+    private static IModelProvider CreateProvider(string provider, AppConfig? appConfig)
     {
         var httpClient = new HttpClient
         {
@@ -136,12 +121,76 @@ public sealed class SessionRuntimeFactory
                         "ANTHROPIC_API_KEY environment variable is not set")),
             "openai" => new OpenAIProvider(
                 httpClient,
-                Environment.GetEnvironmentVariable("OPENAI_API_KEY")
-                    ?? throw new InvalidOperationException(
-                        "OPENAI_API_KEY environment variable is not set"),
+                GetOptionalOpenAIApiKey(),
                 Environment.GetEnvironmentVariable("OPENAI_BASE_URL")),
+            "openai-compatible" => new OpenAIProvider(
+                httpClient,
+                Environment.GetEnvironmentVariable("OPENAI_API_KEY"),
+                GetRequiredOpenAICompatibleEndpoint(appConfig)),
             _ => throw new ArgumentException($"Unknown provider: {provider}")
         };
+    }
+
+    private static string ResolveProvider(string? provider, AppConfig? appConfig)
+    {
+        var resolved = !string.IsNullOrWhiteSpace(provider)
+            ? provider
+            : appConfig?.Provider;
+
+        return string.IsNullOrWhiteSpace(resolved) ? "openai" : resolved.Trim().ToLowerInvariant();
+    }
+
+    private static string ResolveModel(string provider, string? model, AppConfig? appConfig)
+    {
+        if (!string.IsNullOrWhiteSpace(model))
+        {
+            return model.Trim();
+        }
+
+        if (!string.IsNullOrWhiteSpace(appConfig?.Model))
+        {
+            return appConfig!.Model!.Trim();
+        }
+
+        return provider switch
+        {
+            "anthropic" => "claude-sonnet-4-20250514",
+            "openai" => "gpt-5-mini",
+            "openai-compatible" => throw new ArgumentException(
+                "Model is required for openai-compatible provider. Provide Model in the request or asdv.yaml."),
+            _ => throw new ArgumentException($"Unknown provider: {provider}")
+        };
+    }
+
+    private static string GetRequiredOpenAICompatibleEndpoint(AppConfig? appConfig)
+    {
+        var endpoint = appConfig?.OpenAICompatibleEndpoint;
+        if (string.IsNullOrWhiteSpace(endpoint))
+        {
+            throw new ArgumentException(
+                "OpenAI-compatible endpoint is required. Set openaiCompatibleEndpoint in asdv.yaml.");
+        }
+
+        return endpoint.Trim();
+    }
+
+    private static AppConfig? LoadAppConfig(string repoRoot)
+    {
+        var path = Path.Combine(repoRoot, "asdv.yaml");
+        return AppConfigLoader.LoadIfExists(path);
+    }
+
+    private static string? GetOptionalOpenAIApiKey()
+    {
+        var baseUrl = Environment.GetEnvironmentVariable("OPENAI_BASE_URL");
+        var apiKey = Environment.GetEnvironmentVariable("OPENAI_API_KEY");
+
+        if (string.IsNullOrWhiteSpace(apiKey) && string.IsNullOrWhiteSpace(baseUrl))
+        {
+            throw new InvalidOperationException("OPENAI_API_KEY environment variable is not set");
+        }
+
+        return apiKey;
     }
 
     private static ToolRegistry CreateToolRegistry()

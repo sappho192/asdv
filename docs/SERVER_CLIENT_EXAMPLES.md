@@ -8,6 +8,11 @@ Requires Node.js 18+.
 node scripts/server-client.mjs --base http://localhost:5000 --workspace C:\\REPO\\asdv --provider openai --model gpt-5-mini
 ```
 
+OpenAI-compatible example (reads `asdv.yaml` from workspace if you omit model):
+```bash
+node scripts/server-client.mjs --base http://localhost:5000 --workspace C:\\REPO\\asdv --provider openai-compatible
+```
+
 Resume an existing session:
 ```bash
 node scripts/server-client.mjs --base http://localhost:5000 --workspace C:\\REPO\\asdv --provider openai --model gpt-5-mini --session <id>
