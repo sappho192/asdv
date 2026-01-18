@@ -68,6 +68,7 @@ dotnet run --project src/Agent.Cli -- -r /path/to/repo -p anthropic "Review the 
 | `--session-id` | `--sid` | Session ID for resume/new session | Auto-generated |
 | `--once` | | Run a single prompt and exit | `false` |
 | `--max-iterations` | | Maximum agent iterations | `20` |
+| `--debug` | `-d` | Enable debug output (stack traces) | `false` |
 
 ## Architecture
 
@@ -111,7 +112,7 @@ tests/
 ### Default Models
 
 - **Anthropic**: `claude-sonnet-4-20250514`
-- **OpenAI**: `gpt-4o`
+- **OpenAI**: `gpt-5-mini`
 
 ## Session Logs
 
