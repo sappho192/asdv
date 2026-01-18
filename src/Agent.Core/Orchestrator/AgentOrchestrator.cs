@@ -182,7 +182,7 @@ public class AgentOrchestrator
         if (decision == PolicyDecision.RequiresApproval)
         {
             var approved = await _approvalService.RequestApprovalAsync(
-                tool.Name, toolCall.ArgsJson, ct);
+                tool.Name, toolCall.ArgsJson, toolCall.CallId, ct);
             if (!approved)
             {
                 return ToolResult.Failure("User denied approval");

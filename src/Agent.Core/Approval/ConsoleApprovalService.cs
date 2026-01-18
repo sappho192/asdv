@@ -2,7 +2,11 @@ namespace Agent.Core.Approval;
 
 public class ConsoleApprovalService : IApprovalService
 {
-    public Task<bool> RequestApprovalAsync(string toolName, string argsJson, CancellationToken ct = default)
+    public Task<bool> RequestApprovalAsync(
+        string toolName,
+        string argsJson,
+        string? callId = null,
+        CancellationToken ct = default)
     {
         Console.WriteLine();
         Console.ForegroundColor = ConsoleColor.Yellow;

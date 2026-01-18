@@ -14,6 +14,11 @@ public sealed record ChatRequest
     public string Message { get; init; } = "";
 }
 
+public sealed record ApprovalRequest
+{
+    public bool Approved { get; init; }
+}
+
 public sealed record SessionInfo(
     string Id,
     string WorkspacePath,

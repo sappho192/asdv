@@ -5,29 +5,28 @@ namespace Agent.Server.Services;
 
 public interface ISessionStore
 {
-    SessionInfo Create(CreateSessionRequest request);
-    bool TryGet(string id, out SessionInfo session);
+    SessionRuntime Create(CreateSessionRequest request);
+    bool TryGet(string id, out SessionRuntime session);
 }
 
 public sealed class InMemorySessionStore : ISessionStore
 {
-    private readonly ConcurrentDictionary<string, SessionInfo> _sessions = new();
+    private readonly ConcurrentDictionary<string, SessionRuntime> _sessions = new();
+    private readonly SessionRuntimeFactory _factory;
 
-    public SessionInfo Create(CreateSessionRequest request)
+    public InMemorySessionStore(SessionRuntimeFactory factory)
     {
-        var id = Guid.NewGuid().ToString("n");
-        var session = new SessionInfo(
-            id,
-            request.WorkspacePath,
-            request.Provider,
-            request.Model,
-            DateTimeOffset.UtcNow);
+        _factory = factory;
+    }
 
-        _sessions[id] = session;
+    public SessionRuntime Create(CreateSessionRequest request)
+    {
+        var session = _factory.Create(request);
+        _sessions[session.Info.Id] = session;
         return session;
     }
 
-    public bool TryGet(string id, out SessionInfo session)
+    public bool TryGet(string id, out SessionRuntime session)
     {
         return _sessions.TryGetValue(id, out session);
     }
