@@ -138,7 +138,7 @@ static async Task RunAgentAsync(
     model ??= provider.ToLowerInvariant() switch
     {
         "anthropic" => "claude-sonnet-4-20250514",
-        "openai" => "gpt-4o",
+        "openai" => "gpt-5-mini",
         _ => throw new ArgumentException($"Unknown provider: {provider}")
     };
 
