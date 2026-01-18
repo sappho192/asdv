@@ -2,6 +2,17 @@
 
 This doc shows a minimal curl-based flow to create a session, stream events, send prompts, and approve tool calls.
 
+## 0) Node.js Interactive Client
+Requires Node.js 18+.
+```bash
+node scripts/server-client.mjs --base http://localhost:5000 --workspace C:\\REPO\\asdv --provider openai --model gpt-5-mini
+```
+
+Resume an existing session:
+```bash
+node scripts/server-client.mjs --base http://localhost:5000 --workspace C:\\REPO\\asdv --provider openai --model gpt-5-mini --session <id>
+```
+
 ## 1) Create Session
 ```bash
 curl -s -X POST http://localhost:5000/api/sessions \
