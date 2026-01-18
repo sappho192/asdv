@@ -1,11 +1,11 @@
 using System.Text;
 using System.Text.Json;
-using Agent.Core.Events;
 using Agent.Core.Messages;
 using Agent.Core.Policy;
 using Agent.Core.Providers;
 using Agent.Core.Tools;
 using Agent.Server.Models;
+using CoreEvents = Agent.Core.Events;
 
 namespace Agent.Server.Services;
 
@@ -47,7 +47,7 @@ public sealed class SessionRunner
                 Temperature = session.Options.Temperature
             };
 
-            var pendingToolCalls = new List<ToolCallReady>();
+            var pendingToolCalls = new List<CoreEvents.ToolCallReady>();
             var textBuffer = new StringBuilder();
             var completedStop = false;
             string? stopReason = null;
@@ -59,22 +59,22 @@ public sealed class SessionRunner
 
                 switch (evt)
                 {
-                    case TextDelta delta:
+                    case CoreEvents.TextDelta delta:
                         textBuffer.Append(delta.Text);
                         events.TryWrite(new TextDeltaEvent(delta.Text));
                         break;
 
-                    case ToolCallReady ready:
+                    case CoreEvents.ToolCallReady ready:
                         pendingToolCalls.Add(ready);
                         events.TryWrite(new ToolCallEvent(ready.CallId, ready.ToolName, ready.ArgsJson));
                         break;
 
-                    case TraceEvent trace when trace.Kind == "error":
+                    case CoreEvents.TraceEvent trace when trace.Kind == "error":
                         errorDetails = trace.Data;
-                        events.TryWrite(new TraceEvent(trace.Kind, trace.Data));
+                        events.TryWrite(new Agent.Server.Models.TraceEvent(trace.Kind, trace.Data));
                         break;
 
-                    case ResponseCompleted completed:
+                    case CoreEvents.ResponseCompleted completed:
                         stopReason = completed.StopReason;
                         completedStop = IsCompletionStopReason(completed.StopReason);
                         events.TryWrite(new CompletedEvent(completed.StopReason));
@@ -119,7 +119,7 @@ public sealed class SessionRunner
                     var toolMessage = new ToolResultMessage(toolCall.CallId, toolCall.ToolName, result);
                     session.Messages.Add(toolMessage);
                     await LogMessageAsync(session, toolMessage);
-                    events.TryWrite(new ToolResultEvent(toolCall.CallId, toolCall.ToolName, result));
+                    events.TryWrite(new Agent.Server.Models.ToolResultEvent(toolCall.CallId, toolCall.ToolName, result));
                 }
             }
             else
@@ -137,7 +137,7 @@ public sealed class SessionRunner
 
     private async Task<ToolResult> ExecuteToolCallAsync(
         SessionRuntime session,
-        ToolCallReady toolCall,
+        CoreEvents.ToolCallReady toolCall,
         CancellationToken ct)
     {
         var tool = session.ToolRegistry.GetTool(toolCall.ToolName);

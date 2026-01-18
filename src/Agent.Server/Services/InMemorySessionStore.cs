@@ -34,6 +34,13 @@ public sealed class InMemorySessionStore : ISessionStore
 
     public bool TryGet(string id, out SessionRuntime session)
     {
-        return _sessions.TryGetValue(id, out session);
+        if (_sessions.TryGetValue(id, out var found))
+        {
+            session = found;
+            return true;
+        }
+
+        session = null!;
+        return false;
     }
 }
