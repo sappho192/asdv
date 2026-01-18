@@ -444,7 +444,7 @@ static string GetSystemPrompt()
 
         ## Patch Format
 
-        When modifying files, use unified diff format:
+        When modifying files, prefer unified diff format:
         ```
         --- a/path/to/file.cs
         +++ b/path/to/file.cs
@@ -453,6 +453,14 @@ static string GetSystemPrompt()
         -removed line
         +added line
          context line
+        ```
+
+        The ApplyPatch tool also accepts the "Begin Patch" format:
+        ```
+        *** Begin Patch
+        *** Add File: path/to/file.cs
+        +new line
+        *** End Patch
         ```
 
         Keep patches minimal and focused on the specific change needed.

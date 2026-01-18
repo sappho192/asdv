@@ -99,7 +99,7 @@ public class ApplyPatchTool : ITool
 
     private async Task<ToolResult> ApplyPatchManuallyAsync(string patch, ToolContext ctx, CancellationToken ct)
     {
-        var filePatches = ParseUnifiedDiff(patch);
+        var filePatches = ParsePatch(patch);
         if (filePatches.Count == 0)
         {
             return ToolResult.Failure("No valid patches found in input");
@@ -110,18 +110,46 @@ public class ApplyPatchTool : ITool
 
         foreach (var filePatch in filePatches)
         {
-            var targetPath = filePatch.NewPath ?? filePatch.OldPath;
+            var sourcePath = NormalizeDiffPath(filePatch.OldPath);
+            var targetPath = NormalizeDiffPath(filePatch.NewPath) ?? sourcePath;
+
+            if (filePatch.IsDelete)
+            {
+                var deletePath = targetPath ?? sourcePath;
+                if (string.IsNullOrEmpty(deletePath))
+                {
+                    failedPatches.Add(new { file = "(unknown)", reason = "No file path found" });
+                    continue;
+                }
+
+                var deleteFullPath = ctx.Workspace.ResolvePath(deletePath);
+                if (deleteFullPath == null)
+                {
+                    failedPatches.Add(new { file = deletePath, reason = "Path traversal detected" });
+                    continue;
+                }
+
+                if (File.Exists(deleteFullPath))
+                {
+                    File.Delete(deleteFullPath);
+                    appliedFiles.Add(deletePath);
+                }
+                else
+                {
+                    failedPatches.Add(new { file = deletePath, reason = "File not found for delete" });
+                }
+                continue;
+            }
+
             if (string.IsNullOrEmpty(targetPath))
             {
                 failedPatches.Add(new { file = "(unknown)", reason = "No file path found" });
                 continue;
             }
 
-            // Clean path (remove a/ or b/ prefix)
-            targetPath = CleanDiffPath(targetPath);
-
-            var fullPath = ctx.Workspace.ResolvePath(targetPath);
-            if (fullPath == null)
+            var sourceFullPath = sourcePath != null ? ctx.Workspace.ResolvePath(sourcePath) : null;
+            var targetFullPath = ctx.Workspace.ResolvePath(targetPath);
+            if (targetFullPath == null || (sourcePath != null && sourceFullPath == null))
             {
                 failedPatches.Add(new { file = targetPath, reason = "Path traversal detected" });
                 continue;
@@ -129,7 +157,8 @@ public class ApplyPatchTool : ITool
 
             try
             {
-                var result = await ApplyHunksToFileAsync(fullPath, filePatch.Hunks, ct);
+                var result = await ApplyHunksToFileAsync(
+                    sourceFullPath ?? targetFullPath, targetFullPath, filePatch.Hunks, ct);
                 if (result.success)
                 {
                     appliedFiles.Add(targetPath);
@@ -165,13 +194,38 @@ public class ApplyPatchTool : ITool
         return ToolResult.Success(new { method = "manual", appliedFiles });
     }
 
-    private static string CleanDiffPath(string path)
+    private static List<FilePatch> ParsePatch(string patch)
     {
-        if (path.StartsWith("a/") || path.StartsWith("b/"))
+        return LooksLikeApplyPatch(patch) ? ParseApplyPatch(patch) : ParseUnifiedDiff(patch);
+    }
+
+    private static bool LooksLikeApplyPatch(string patch)
+    {
+        return patch.Contains("*** Begin Patch")
+            || patch.Contains("*** Update File:")
+            || patch.Contains("*** Add File:")
+            || patch.Contains("*** Delete File:");
+    }
+
+    private static string? NormalizeDiffPath(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
         {
-            return path[2..];
+            return null;
         }
-        return path;
+
+        var normalized = path.Trim();
+        if (normalized == "/dev/null")
+        {
+            return null;
+        }
+
+        if (normalized.StartsWith("a/") || normalized.StartsWith("b/"))
+        {
+            return normalized[2..];
+        }
+
+        return normalized;
     }
 
     private static List<FilePatch> ParseUnifiedDiff(string patch)
@@ -186,7 +240,7 @@ public class ApplyPatchTool : ITool
 
         for (int i = 0; i < lines.Length; i++)
         {
-            var line = lines[i];
+            var line = lines[i].TrimEnd('\r');
 
             if (line.StartsWith("--- "))
             {
@@ -246,14 +300,143 @@ public class ApplyPatchTool : ITool
         return result;
     }
 
+    private static List<FilePatch> ParseApplyPatch(string patch)
+    {
+        var result = new List<FilePatch>();
+        var lines = patch.Split('\n');
+
+        FilePatch? currentFile = null;
+        Hunk? currentHunk = null;
+
+        var hunkHeaderRegex = new Regex(@"^@@\s*-(\d+)(?:,(\d+))?\s*\+(\d+)(?:,(\d+))?\s*@@");
+
+        void FlushFile()
+        {
+            if (currentFile == null)
+            {
+                return;
+            }
+
+            if (currentHunk != null)
+            {
+                currentFile.Hunks.Add(currentHunk);
+                currentHunk = null;
+            }
+
+            result.Add(currentFile);
+            currentFile = null;
+        }
+
+        for (int i = 0; i < lines.Length; i++)
+        {
+            var line = lines[i].TrimEnd('\r');
+
+            if (line.StartsWith("*** Begin Patch"))
+            {
+                continue;
+            }
+
+            if (line.StartsWith("*** End Patch"))
+            {
+                break;
+            }
+
+            if (line.StartsWith("*** End of File"))
+            {
+                continue;
+            }
+
+            if (line.StartsWith("*** Add File: "))
+            {
+                FlushFile();
+                currentFile = new FilePatch { NewPath = line["*** Add File: ".Length..].Trim() };
+                currentHunk = new Hunk { OldStart = 1, OldCount = 0, NewStart = 1, NewCount = 0 };
+                continue;
+            }
+
+            if (line.StartsWith("*** Delete File: "))
+            {
+                FlushFile();
+                currentFile = new FilePatch
+                {
+                    OldPath = line["*** Delete File: ".Length..].Trim(),
+                    IsDelete = true
+                };
+                currentHunk = null;
+                continue;
+            }
+
+            if (line.StartsWith("*** Update File: "))
+            {
+                FlushFile();
+                currentFile = new FilePatch { OldPath = line["*** Update File: ".Length..].Trim() };
+                currentHunk = null;
+                continue;
+            }
+
+            if (line.StartsWith("*** Move to: ") && currentFile != null)
+            {
+                currentFile.NewPath = line["*** Move to: ".Length..].Trim();
+                continue;
+            }
+
+            if (line.StartsWith("@@") && currentFile != null)
+            {
+                if (currentHunk != null)
+                {
+                    currentFile.Hunks.Add(currentHunk);
+                }
+
+                var match = hunkHeaderRegex.Match(line);
+                if (match.Success)
+                {
+                    currentHunk = new Hunk
+                    {
+                        OldStart = int.Parse(match.Groups[1].Value),
+                        OldCount = match.Groups[2].Success ? int.Parse(match.Groups[2].Value) : 1,
+                        NewStart = int.Parse(match.Groups[3].Value),
+                        NewCount = match.Groups[4].Success ? int.Parse(match.Groups[4].Value) : 1
+                    };
+                }
+                else
+                {
+                    currentHunk = new Hunk { OldStart = 1, OldCount = 0, NewStart = 1, NewCount = 0 };
+                }
+                continue;
+            }
+
+            if (currentFile != null)
+            {
+                if (currentHunk == null)
+                {
+                    if (line.StartsWith("+") || line.StartsWith("-") || line.StartsWith(" ") || line == "")
+                    {
+                        currentHunk = new Hunk { OldStart = 1, OldCount = 0, NewStart = 1, NewCount = 0 };
+                    }
+                }
+
+                if (currentHunk != null)
+                {
+                    if (line.StartsWith("+") || line.StartsWith("-") || line.StartsWith(" ") || line == "")
+                    {
+                        currentHunk.Lines.Add(line);
+                    }
+                }
+            }
+        }
+
+        FlushFile();
+        return result;
+    }
+
     private static async Task<(bool success, string? error)> ApplyHunksToFileAsync(
-        string path, List<Hunk> hunks, CancellationToken ct)
+        string sourcePath, string targetPath, List<Hunk> hunks, CancellationToken ct)
     {
         List<string> lines;
 
-        if (File.Exists(path))
+        if (File.Exists(sourcePath))
         {
-            lines = (await File.ReadAllLinesAsync(path, ct)).ToList();
+            lines = (await File.ReadAllLinesAsync(sourcePath, ct)).ToList();
         }
         else
         {
@@ -275,13 +458,19 @@ public class ApplyPatchTool : ITool
         }
 
         // Ensure directory exists
-        var dir = Path.GetDirectoryName(path);
+        var dir = Path.GetDirectoryName(targetPath);
         if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir))
         {
             Directory.CreateDirectory(dir);
         }
 
-        await File.WriteAllLinesAsync(path, lines, ct);
+        await File.WriteAllLinesAsync(targetPath, lines, ct);
+
+        if (!string.Equals(sourcePath, targetPath, StringComparison.OrdinalIgnoreCase)
+            && File.Exists(sourcePath))
+        {
+            File.Delete(sourcePath);
+        }
         return (true, null);
     }
 
@@ -341,6 +530,7 @@ public class ApplyPatchTool : ITool
     {
         public string? OldPath { get; set; }
         public string? NewPath { get; set; }
+        public bool IsDelete { get; set; }
         public List<Hunk> Hunks { get; } = [];
     }
 

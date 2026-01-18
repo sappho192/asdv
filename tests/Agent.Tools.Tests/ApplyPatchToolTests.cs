@@ -87,6 +87,52 @@ public class ApplyPatchToolTests : IDisposable
     }
 
     [Fact]
+    public async Task ExecuteAsync_ApplyPatchAddFile_CreatesFile()
+    {
+        // Arrange
+        var patch = """
+        *** Begin Patch
+        *** Add File: added.txt
+        +hello
+        +world
+        *** End Patch
+        """;
+        var args = JsonDocument.Parse($$"""{"patch": {{JsonSerializer.Serialize(patch)}}}""").RootElement;
+
+        // Act
+        var result = await _tool.ExecuteAsync(args, _context, CancellationToken.None);
+
+        // Assert
+        result.Ok.Should().BeTrue();
+        var filePath = Path.Combine(_testRoot, "added.txt");
+        File.Exists(filePath).Should().BeTrue();
+        var contents = await File.ReadAllLinesAsync(filePath);
+        contents.Should().Equal("hello", "world");
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_ApplyPatchDeleteFile_RemovesFile()
+    {
+        // Arrange
+        var filePath = Path.Combine(_testRoot, "remove.txt");
+        await File.WriteAllTextAsync(filePath, "bye");
+
+        var patch = """
+        *** Begin Patch
+        *** Delete File: remove.txt
+        *** End Patch
+        """;
+        var args = JsonDocument.Parse($$"""{"patch": {{JsonSerializer.Serialize(patch)}}}""").RootElement;
+
+        // Act
+        var result = await _tool.ExecuteAsync(args, _context, CancellationToken.None);
+
+        // Assert
+        result.Ok.Should().BeTrue();
+        File.Exists(filePath).Should().BeFalse();
+    }
+
+    [Fact]
     public async Task ExecuteAsync_PartialApply_ReturnsDiagnostics()
     {
         // Arrange

@@ -96,7 +96,7 @@ tests/
 | `SearchText` | Search for text patterns (regex) | No |
 | `GitStatus` | Get repository status | No |
 | `GitDiff` | View staged/unstaged changes | No |
-| `ApplyPatch` | Apply unified diff patches | Yes |
+| `ApplyPatch` | Apply unified diff or Begin Patch format patches | Yes |
 | `RunCommand` | Execute shell commands | Yes |
 
 ## Configuration

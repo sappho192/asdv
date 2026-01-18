@@ -420,3 +420,4 @@ FodyWeavers.xsd
 .claude/settings.local.json
 
 .agent/*
+build/*
