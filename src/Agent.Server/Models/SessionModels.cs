@@ -9,6 +9,13 @@ public sealed record CreateSessionRequest
 
 public sealed record CreateSessionResponse(string SessionId);
 
+public sealed record ResumeSessionRequest
+{
+    public string WorkspacePath { get; init; } = "";
+    public string Provider { get; init; } = "";
+    public string Model { get; init; } = "";
+}
+
 public sealed record ChatRequest
 {
     public string Message { get; init; } = "";

@@ -6,6 +6,7 @@ namespace Agent.Server.Services;
 public interface ISessionStore
 {
     SessionRuntime Create(CreateSessionRequest request);
+    bool TryAdd(SessionRuntime session);
     bool TryGet(string id, out SessionRuntime session);
 }
 
@@ -24,6 +25,11 @@ public sealed class InMemorySessionStore : ISessionStore
         var session = _factory.Create(request);
         _sessions[session.Info.Id] = session;
         return session;
+    }
+
+    public bool TryAdd(SessionRuntime session)
+    {
+        return _sessions.TryAdd(session.Info.Id, session);
     }
 
     public bool TryGet(string id, out SessionRuntime session)

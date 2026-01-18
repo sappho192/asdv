@@ -41,6 +41,43 @@ app.MapPost("/api/sessions/{id}/chat", (string id, ChatRequest request, ISession
     return Results.Accepted();
 });
 
+app.MapPost("/api/sessions/{id}/resume", (
+    string id,
+    ResumeSessionRequest request,
+    ISessionStore store,
+    SessionRuntimeFactory factory,
+    ILogger<Program> logger) =>
+{
+    if (store.TryGet(id, out _))
+    {
+        return Results.Conflict(new { error = "Session already exists." });
+    }
+
+    try
+    {
+        var repoRoot = Path.GetFullPath(request.WorkspacePath);
+        var logPath = SessionRuntimeFactory.GetSessionLogPath(repoRoot, id);
+        if (!File.Exists(logPath))
+        {
+            return Results.NotFound(new { error = "Session log not found." });
+        }
+
+        var messages = SessionLogReader.LoadMessages(logPath, warning =>
+        {
+            logger.LogWarning("Session resume warning: {Warning}", warning);
+        });
+
+        var session = factory.CreateResume(id, request, messages);
+        return store.TryAdd(session)
+            ? Results.Ok(new CreateSessionResponse(session.Info.Id))
+            : Results.Conflict(new { error = "Session already exists." });
+    }
+    catch (Exception ex)
+    {
+        return Results.BadRequest(new { error = ex.Message });
+    }
+});
+
 app.MapPost("/api/sessions/{id}/approvals/{callId}", (string id, string callId, ApprovalRequest request, ISessionStore store) =>
 {
     if (!store.TryGet(id, out var session))

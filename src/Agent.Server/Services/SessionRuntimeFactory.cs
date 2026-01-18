@@ -1,4 +1,5 @@
 using Agent.Core.Logging;
+using Agent.Core.Messages;
 using Agent.Core.Orchestrator;
 using Agent.Core.Policy;
 using Agent.Core.Providers;
@@ -15,6 +16,36 @@ namespace Agent.Server.Services;
 public sealed class SessionRuntimeFactory
 {
     public SessionRuntime Create(CreateSessionRequest request)
+    {
+        return CreateInternal(request, null, null);
+    }
+
+    public SessionRuntime CreateResume(string sessionId, ResumeSessionRequest request, List<ChatMessage> messages)
+    {
+        if (string.IsNullOrWhiteSpace(sessionId))
+        {
+            throw new ArgumentException("SessionId is required.");
+        }
+
+        var createRequest = new CreateSessionRequest
+        {
+            WorkspacePath = request.WorkspacePath,
+            Provider = request.Provider,
+            Model = request.Model
+        };
+
+        return CreateInternal(createRequest, sessionId.Trim(), messages);
+    }
+
+    public static string GetSessionLogPath(string repoRoot, string sessionId)
+    {
+        return Path.Combine(repoRoot, ".agent", $"session_{sessionId}.jsonl");
+    }
+
+    private SessionRuntime CreateInternal(
+        CreateSessionRequest request,
+        string? sessionId,
+        List<ChatMessage>? messages)
     {
         if (string.IsNullOrWhiteSpace(request.WorkspacePath))
         {
@@ -37,7 +68,7 @@ public sealed class SessionRuntimeFactory
             ? GetDefaultModel(provider)
             : request.Model.Trim();
 
-        var sessionId = Guid.NewGuid().ToString("n");
+        sessionId ??= Guid.NewGuid().ToString("n");
         var info = new SessionInfo(
             sessionId,
             repoRoot,
@@ -63,7 +94,7 @@ public sealed class SessionRuntimeFactory
             SystemPrompt = SystemPromptProvider.GetSystemPrompt()
         };
 
-        return new SessionRuntime(
+        var runtime = new SessionRuntime(
             info,
             options,
             toolRegistry,
@@ -71,6 +102,12 @@ public sealed class SessionRuntimeFactory
             policyEngine,
             logger,
             approvalService);
+        if (messages is { Count: > 0 })
+        {
+            runtime.Messages.AddRange(messages);
+        }
+
+        return runtime;
     }
 
     private static string GetDefaultModel(string provider)
@@ -126,7 +163,7 @@ public sealed class SessionRuntimeFactory
     {
         try
         {
-            var sessionPath = Path.Combine(repoRoot, ".agent", $"session_{sessionId}.jsonl");
+            var sessionPath = GetSessionLogPath(repoRoot, sessionId);
             return new JsonlSessionLogger(sessionPath);
         }
         catch
