@@ -259,7 +259,7 @@ static async Task RunAgentAsync(
     // Print header
     Console.ForegroundColor = ConsoleColor.Cyan;
     Console.WriteLine("╔══════════════════════════════════════════════════════════╗");
-    Console.WriteLine("║                    Local Coding Agent                     ║");
+    Console.WriteLine("║              ASDV - Agile Synthetic Dev Vibe             ║");
     Console.WriteLine("╚══════════════════════════════════════════════════════════╝");
     Console.ResetColor();
     Console.WriteLine();
