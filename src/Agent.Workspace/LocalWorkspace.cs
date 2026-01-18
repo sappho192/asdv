@@ -19,7 +19,7 @@ public class LocalWorkspace : IWorkspace
             return null;
 
         // Prevent absolute paths
-        if (Path.IsPathRooted(relativePath))
+        if (Path.IsPathRooted(relativePath) || LooksLikeWindowsAbsolutePath(relativePath))
             return null;
 
         // Prevent obvious path traversal attempts
@@ -62,7 +62,7 @@ public class LocalWorkspace : IWorkspace
             return true;
 
         var parts = relative.Split(
-            [Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar],
+            new[] { Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar },
             StringSplitOptions.RemoveEmptyEntries);
 
         var current = _normalizedRoot;
@@ -89,6 +89,21 @@ public class LocalWorkspace : IWorkspace
         }
 
         return true;
+    }
+
+    private static bool LooksLikeWindowsAbsolutePath(string path)
+    {
+        if (path.Length >= 3 &&
+            char.IsLetter(path[0]) &&
+            path[1] == ':' &&
+            (path[2] == '\\' || path[2] == '/'))
+            return true;
+
+        if (path.StartsWith(@"\\", StringComparison.Ordinal) ||
+            path.StartsWith("//", StringComparison.Ordinal))
+            return true;
+
+        return false;
     }
 
     private bool IsUnderRoot(string normalizedPath)

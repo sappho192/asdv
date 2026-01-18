@@ -84,7 +84,8 @@ public class RunCommandToolTests : IDisposable
         }
         else
         {
-            args = JsonDocument.Parse("""{"exe":"sh","args":["-c","sleep 2"],"timeoutSec":1}""")
+            var shell = ResolveShellPath();
+            args = JsonDocument.Parse($"{{\"exe\":\"{shell}\",\"args\":[\"-c\",\"sleep 2\"],\"timeoutSec\":1}}")
                 .RootElement;
         }
 
@@ -108,7 +109,8 @@ public class RunCommandToolTests : IDisposable
         }
         else
         {
-            args = JsonDocument.Parse("""{"exe":"sh","args":["-c","echo hello"]}""").RootElement;
+            var shell = ResolveShellPath();
+            args = JsonDocument.Parse($"{{\"exe\":\"{shell}\",\"args\":[\"-c\",\"echo hello\"]}}").RootElement;
         }
 
         // Act
@@ -118,5 +120,16 @@ public class RunCommandToolTests : IDisposable
         result.Ok.Should().BeTrue();
         result.Stdout.Should().NotBeNull();
         result.Stdout!.ToLowerInvariant().Should().Contain("hello");
+    }
+
+    private static string ResolveShellPath()
+    {
+        if (File.Exists("/bin/sh"))
+            return "/bin/sh";
+
+        if (File.Exists("/usr/bin/sh"))
+            return "/usr/bin/sh";
+
+        return "sh";
     }
 }

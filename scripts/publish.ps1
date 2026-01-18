@@ -1,12 +1,27 @@
 param(
     [string]$Configuration = "Release",
-    [string[]]$Rids = @("win-x64"),
+    [string[]]$Rids = @(),
     [string]$CliProject = "src/Agent.Cli/Agent.Cli.csproj",
     [string]$ServerProject = "src/Agent.Server/Agent.Server.csproj",
     [string]$BuildDir = "build"
 )
 
 $ErrorActionPreference = "Stop"
+
+if (-not $PSBoundParameters.ContainsKey("Rids") -or $Rids.Count -eq 0) {
+    if ($IsWindows) {
+        $Rids = @("win-x64")
+    } elseif ($IsMacOS) {
+        $osArch = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture
+        if ($osArch -eq [System.Runtime.InteropServices.Architecture]::Arm64) {
+            $Rids = @("osx-arm64")
+        } else {
+            $Rids = @("osx-x64")
+        }
+    } else {
+        $Rids = @("linux-x64")
+    }
+}
 
 $repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 $buildRoot = Join-Path $repoRoot $BuildDir

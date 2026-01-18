@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 using System.Text.Json;
 using Agent.Core.Approval;
 using Agent.Core.Tools;
@@ -17,6 +18,7 @@ public class GitToolsIntegrationTests : IDisposable
     private readonly GitStatusTool _statusTool;
     private readonly GitDiffTool _diffTool;
     private readonly bool _gitAvailable;
+    private readonly string? _gitPath;
 
     public GitToolsIntegrationTests()
     {
@@ -32,7 +34,8 @@ public class GitToolsIntegrationTests : IDisposable
         _statusTool = new GitStatusTool();
         _diffTool = new GitDiffTool();
 
-        _gitAvailable = IsGitAvailable();
+        _gitPath = ResolveGitPath();
+        _gitAvailable = _gitPath != null && IsGitAvailable(_gitPath);
         if (_gitAvailable)
         {
             RunGit("init");
@@ -128,13 +131,45 @@ public class GitToolsIntegrationTests : IDisposable
         dataJson.Should().Contain("\"staged\":true");
     }
 
-    private bool IsGitAvailable()
+    private static string? ResolveGitPath()
+    {
+        var candidates = RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
+            ? new[] { "git.exe", "git.cmd", "git.bat", "git" }
+            : new[] { "git" };
+
+        foreach (var candidate in candidates)
+        {
+            var found = FindOnPath(candidate);
+            if (found != null)
+                return found;
+        }
+
+        return null;
+    }
+
+    private static string? FindOnPath(string fileName)
+    {
+        var pathEnv = Environment.GetEnvironmentVariable("PATH");
+        if (string.IsNullOrWhiteSpace(pathEnv))
+            return null;
+
+        foreach (var dir in pathEnv.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries))
+        {
+            var candidate = Path.Combine(dir, fileName);
+            if (File.Exists(candidate))
+                return candidate;
+        }
+
+        return null;
+    }
+
+    private static bool IsGitAvailable(string gitPath)
     {
         try
         {
             var psi = new ProcessStartInfo
             {
-                FileName = "git",
+                FileName = gitPath,
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
                 UseShellExecute = false,
@@ -159,7 +194,7 @@ public class GitToolsIntegrationTests : IDisposable
     {
         var psi = new ProcessStartInfo
         {
-            FileName = "git",
+            FileName = _gitPath ?? "git",
             WorkingDirectory = _testRoot,
             RedirectStandardOutput = true,
             RedirectStandardError = true,

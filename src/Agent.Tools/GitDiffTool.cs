@@ -25,9 +25,15 @@ public class GitDiffTool : ITool
         var staged = args.TryGetProperty("staged", out var s) && s.GetBoolean();
         var file = args.TryGetProperty("file", out var f) ? f.GetString() : null;
 
+        var gitPath = GitToolHelper.ResolveGitPath();
+        if (gitPath == null)
+        {
+            return ToolResult.Failure("git not found on PATH");
+        }
+
         var psi = new ProcessStartInfo
         {
-            FileName = "git",
+            FileName = gitPath,
             WorkingDirectory = ctx.RepoRoot,
             RedirectStandardOutput = true,
             RedirectStandardError = true,

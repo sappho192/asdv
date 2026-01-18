@@ -19,9 +19,15 @@ public class GitStatusTool : ITool
 
     public async Task<ToolResult> ExecuteAsync(JsonElement args, ToolContext ctx, CancellationToken ct)
     {
+        var gitPath = GitToolHelper.ResolveGitPath();
+        if (gitPath == null)
+        {
+            return ToolResult.Failure("git not found on PATH");
+        }
+
         var psi = new ProcessStartInfo
         {
-            FileName = "git",
+            FileName = gitPath,
             WorkingDirectory = ctx.RepoRoot,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
