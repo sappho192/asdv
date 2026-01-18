@@ -55,6 +55,8 @@ public class AgentOrchestrator
             var textBuffer = new StringBuilder();
 
             var completedStop = false;
+            string? stopReason = null;
+            string? errorDetails = null;
             await foreach (var evt in _provider.StreamAsync(request, ct))
             {
                 await _logger.LogAsync(new { type = "event", eventType = evt.GetType().Name, data = evt });
@@ -78,8 +80,16 @@ public class AgentOrchestrator
                         pendingToolCalls.Add(ready);
                         break;
 
+                    case TraceEvent trace when trace.Kind == "error":
+                        errorDetails = trace.Data;
+                        Console.ForegroundColor = ConsoleColor.Red;
+                        Console.WriteLine($"[Provider error] {trace.Data}");
+                        Console.ResetColor();
+                        break;
+
                     case ResponseCompleted completed:
                         Console.WriteLine();
+                        stopReason = completed.StopReason;
                         completedStop = IsCompletionStopReason(completed.StopReason);
                         break;
                 }
@@ -106,6 +116,19 @@ public class AgentOrchestrator
             {
                 Console.ForegroundColor = ConsoleColor.Green;
                 Console.WriteLine("[Agent completed]");
+                Console.ResetColor();
+                return;
+            }
+
+            if (pendingToolCalls.Count == 0 && textBuffer.Length == 0 && !completedStop)
+            {
+                var reason = stopReason ?? "unknown";
+                Console.ForegroundColor = ConsoleColor.Yellow;
+                Console.WriteLine($"[No response] stop_reason={reason}");
+                if (!string.IsNullOrWhiteSpace(errorDetails))
+                {
+                    Console.WriteLine($"[Provider error] {errorDetails}");
+                }
                 Console.ResetColor();
                 return;
             }
