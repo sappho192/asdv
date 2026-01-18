@@ -190,7 +190,7 @@ public class OpenAIProvider : IModelProvider
 
         if (request.MaxTokens.HasValue)
         {
-            body["max_tokens"] = request.MaxTokens.Value;
+            body["max_completion_tokens"] = request.MaxTokens.Value;
         }
 
         if (request.Temperature.HasValue)
