@@ -343,6 +343,7 @@ static async Task RunAgentAsync(
             }
 
             if (string.Equals(input, "/exit", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(input, "/q", StringComparison.OrdinalIgnoreCase)
                 || string.Equals(input, "/quit", StringComparison.OrdinalIgnoreCase))
             {
                 break;
