@@ -54,6 +54,7 @@ public class AgentOrchestrator
             var pendingToolCalls = new List<ToolCallReady>();
             var textBuffer = new StringBuilder();
 
+            var completedStop = false;
             await foreach (var evt in _provider.StreamAsync(request, ct))
             {
                 await _logger.LogAsync(new { type = "event", eventType = evt.GetType().Name, data = evt });
@@ -79,13 +80,7 @@ public class AgentOrchestrator
 
                     case ResponseCompleted completed:
                         Console.WriteLine();
-                        if (IsCompletionStopReason(completed.StopReason) && pendingToolCalls.Count == 0)
-                        {
-                            Console.ForegroundColor = ConsoleColor.Green;
-                            Console.WriteLine("[Agent completed]");
-                            Console.ResetColor();
-                            return;
-                        }
+                        completedStop = IsCompletionStopReason(completed.StopReason);
                         break;
                 }
             }
@@ -105,6 +100,14 @@ public class AgentOrchestrator
             if (assistantMessage != null)
             {
                 await LogMessageAsync(assistantMessage);
+            }
+
+            if (pendingToolCalls.Count == 0 && completedStop)
+            {
+                Console.ForegroundColor = ConsoleColor.Green;
+                Console.WriteLine("[Agent completed]");
+                Console.ResetColor();
+                return;
             }
 
             if (pendingToolCalls.Count > 0)
