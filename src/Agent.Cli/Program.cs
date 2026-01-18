@@ -66,7 +66,7 @@ var promptArgument = new Argument<string?>(
     Arity = ArgumentArity.ZeroOrOne
 };
 
-var rootCommand = new RootCommand("Local coding agent - Claude Code style")
+var rootCommand = new RootCommand("ASDV - Claude Code style")
 {
     repoOption,
     providerOption,

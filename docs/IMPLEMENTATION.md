@@ -1400,7 +1400,7 @@ public class JsonlSessionLogger : ISessionLogger
 // src/Agent.Cli/Program.cs
 using System.CommandLine;
 
-var rootCommand = new RootCommand("Local coding agent");
+var rootCommand = new RootCommand("ASDV");
 
 var repoOption = new Option<string>(
     "--repo",

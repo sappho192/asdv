@@ -3,7 +3,7 @@
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <RootNamespace>Agent.Cli</RootNamespace>
-    <AssemblyName>agent</AssemblyName>
+    <AssemblyName>asdv</AssemblyName>
   </PropertyGroup>
 
   <PropertyGroup>

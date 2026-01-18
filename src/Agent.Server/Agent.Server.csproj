@@ -2,7 +2,7 @@
 
   <PropertyGroup>
     <RootNamespace>Agent.Server</RootNamespace>
-    <AssemblyName>agent-server</AssemblyName>
+    <AssemblyName>asdv_server</AssemblyName>
   </PropertyGroup>
 
   <ItemGroup>
