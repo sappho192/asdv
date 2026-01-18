@@ -35,14 +35,17 @@ public class AgentOrchestrator
         _options = options;
     }
 
-    public async Task RunAsync(string userPrompt, CancellationToken ct = default)
+    public async Task RunAsync(
+        string userPrompt,
+        List<ChatMessage>? messages = null,
+        CancellationToken ct = default)
     {
-        var messages = new List<ChatMessage>
-        {
-            new UserMessage(userPrompt)
-        };
+        messages ??= new List<ChatMessage>();
+        var userMessage = new UserMessage(userPrompt);
+        messages.Add(userMessage);
 
         await _logger.LogAsync(new { type = "user_prompt", content = userPrompt });
+        await LogMessageAsync(userMessage);
 
         var exhausted = true;
         for (int iteration = 0; iteration < _options.MaxIterations; iteration++)
@@ -87,15 +90,21 @@ public class AgentOrchestrator
                 }
             }
 
+            AssistantMessage? assistantMessage = null;
             if (textBuffer.Length > 0 || pendingToolCalls.Count > 0)
             {
-                messages.Add(new AssistantMessage
+                assistantMessage = new AssistantMessage
                 {
                     Content = textBuffer.Length > 0 ? textBuffer.ToString() : null,
                     ToolCalls = pendingToolCalls.Count > 0
                         ? pendingToolCalls.Select(tc => new ToolCall(tc.CallId, tc.ToolName, tc.ArgsJson)).ToList()
                         : null
-                });
+                };
+                messages.Add(assistantMessage);
+            }
+            if (assistantMessage != null)
+            {
+                await LogMessageAsync(assistantMessage);
             }
 
             if (pendingToolCalls.Count > 0)
@@ -103,7 +112,9 @@ public class AgentOrchestrator
                 foreach (var toolCall in pendingToolCalls)
                 {
                     var result = await ExecuteToolCallAsync(toolCall, ct);
-                    messages.Add(new ToolResultMessage(toolCall.CallId, toolCall.ToolName, result));
+                    var toolMessage = new ToolResultMessage(toolCall.CallId, toolCall.ToolName, result);
+                    messages.Add(toolMessage);
+                    await LogMessageAsync(toolMessage);
 
                     PrintToolResult(toolCall.ToolName, result);
                 }
@@ -227,5 +238,39 @@ public class AgentOrchestrator
     private static bool IsCompletionStopReason(string? stopReason)
     {
         return stopReason == "end_turn" || stopReason == "stop";
+    }
+
+    private Task LogMessageAsync(ChatMessage message)
+    {
+        return message switch
+        {
+            UserMessage userMessage => _logger.LogAsync(new
+            {
+                type = "message",
+                role = userMessage.Role,
+                content = userMessage.Content
+            }),
+            AssistantMessage assistantMessage => _logger.LogAsync(new
+            {
+                type = "message",
+                role = assistantMessage.Role,
+                content = assistantMessage.Content,
+                toolCalls = assistantMessage.ToolCalls?.Select(tc => new
+                {
+                    callId = tc.CallId,
+                    name = tc.Name,
+                    argsJson = tc.ArgsJson
+                })
+            }),
+            ToolResultMessage toolResultMessage => _logger.LogAsync(new
+            {
+                type = "message",
+                role = toolResultMessage.Role,
+                callId = toolResultMessage.CallId,
+                toolName = toolResultMessage.ToolName,
+                result = toolResultMessage.Result
+            }),
+            _ => _logger.LogAsync(new { type = "message", role = message.Role })
+        };
     }
 }

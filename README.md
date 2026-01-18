@@ -34,11 +34,14 @@ export ANTHROPIC_API_KEY=your_key_here
 # or
 export OPENAI_API_KEY=your_key_here
 
-# Run with default settings (OpenAI)
-dotnet run --project src/Agent.Cli -- "Describe the project structure"
+# Run with default settings (OpenAI, REPL mode by default)
+dotnet run --project src/Agent.Cli --
 
-# Run with OpenAI
-dotnet run --project src/Agent.Cli -- -p openai "Fix the bug in Program.cs"
+# Run a single prompt and exit
+dotnet run --project src/Agent.Cli -- --once -p openai "Fix the bug in Program.cs"
+
+# Resume a session by ID (REPL)
+dotnet run --project src/Agent.Cli -- --session-id <sessionId>
 
 # Run with auto-approve (use with caution)
 dotnet run --project src/Agent.Cli -- -y "Add unit tests for Calculator.cs"
@@ -56,6 +59,8 @@ dotnet run --project src/Agent.Cli -- -r /path/to/repo "Refactor the authenticat
 | `--model` | `-m` | Model name | Provider-specific |
 | `--yes` | `-y` | Auto-approve all tool calls | `false` |
 | `--session` | `-s` | Session log file path | Auto-generated |
+| `--session-id` | `--sid` | Session ID for resume/new session | Auto-generated |
+| `--once` | | Run a single prompt and exit | `false` |
 | `--max-iterations` | | Maximum agent iterations | `20` |
 
 ## Architecture
@@ -104,14 +109,15 @@ tests/
 
 ## Session Logs
 
-Session logs are saved in JSONL format to `.agent/session_YYYYMMDD_HHMMSS.jsonl` by default. Each line contains:
+Session logs are saved in JSONL format to `.agent/session_<sessionId>.jsonl` by default. Each line contains:
 
 - User prompts
 - Model streaming events
 - Tool calls and results
+- Message snapshots (for replay/resume)
 - Timestamps
 
-Use session logs for debugging, auditing, or replaying agent sessions.
+Use `--session-id` (or `--session`) to resume a conversation from the same log file (they are mutually exclusive). An index of sessions is also appended to `.agent/sessions.jsonl` for debugging and discovery.
 
 ## Safety Features
 
