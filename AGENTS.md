@@ -91,15 +91,18 @@ public class YourProvider : IModelProvider
 4. Register in `Agent.Cli/Program.cs`:
 
 ```csharp
-static IModelProvider CreateProvider(string provider, string model)
+static IModelProvider CreateProvider(string provider, AppConfig? appConfig)
 {
     return provider switch
     {
         "yourprovider" => new YourProvider(...),
+        "openai-compatible" => CreateOpenAIProvider(httpClient, endpoint, requireApiKey: false),
         // ...
     };
 }
 ```
+
+**Note:** The `CreateProvider` function now accepts an `AppConfig?` parameter to support YAML-based configuration.
 
 ## Adding a New Tool
 
@@ -423,4 +426,14 @@ Environment variables:
 
 - `ASPNETCORE_URLS`: Server bind address (default: `http://localhost:5000`)
 - `ANTHROPIC_API_KEY` / `OPENAI_API_KEY`: LLM provider credentials
-- `OPENAI_BASE_URL`: Custom OpenAI-compatible endpoint
+- `OPENAI_BASE_URL`: Custom base URL for OpenAI provider (optional)
+
+YAML configuration (`asdv.yaml` in workspace root):
+
+```yaml
+provider: openai-compatible
+model: your-model-name
+openaiCompatibleEndpoint: http://127.0.0.1:8080
+```
+
+The server automatically loads `asdv.yaml` from the workspace directory if present. This enables using local LLM servers (llama.cpp, vLLM, Ollama, etc.) without requiring API keys.

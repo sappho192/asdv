@@ -4,7 +4,7 @@ This file provides guidance for AI assistants (like Claude) working on this code
 
 ## Project Overview
 
-This is a .NET 8 console-based coding agent that operates on local repositories. It supports both OpenAI and Anthropic as LLM providers with a provider-agnostic architecture.
+This is a .NET 8 console-based coding agent that operates on local repositories. It supports OpenAI, Anthropic, and OpenAI-compatible endpoints (e.g., llama.cpp, vLLM, Ollama) with a provider-agnostic architecture.
 
 ## Build & Test Commands
 
@@ -30,6 +30,10 @@ dotnet run --project src/Agent.Cli -- --session-id <sessionId>
 # Run with specific provider
 dotnet run --project src/Agent.Cli -- -p openai "your prompt"
 dotnet run --project src/Agent.Cli -- -p anthropic "your prompt"
+dotnet run --project src/Agent.Cli -- -p openai-compatible "your prompt"
+
+# Use local LLM via YAML config (asdv.yaml in repo root)
+dotnet run --project src/Agent.Cli -- "your prompt"
 
 # Run with debug output (shows stack traces and detailed errors)
 dotnet run --project src/Agent.Cli -- -d "your prompt"
@@ -50,6 +54,7 @@ src/
     Program.cs         # Main entry point, CLI options, REPL loop
     SessionLogReader.cs # Session log parsing and message loading
   Agent.Core/          # Core interfaces, events, orchestrator
+    Config/            # AppConfig, AppConfigLoader (YAML configuration)
     Events/            # AgentEvent types (TextDelta, ToolCallReady, etc.)
     Messages/          # ChatMessage types (UserMessage, AssistantMessage, etc.)
     Tools/             # ITool interface, ToolResult, ToolRegistry
@@ -194,6 +199,7 @@ Task<PolicyDecision> EvaluateAsync(ITool tool, string argsJson)
 
 - `System.CommandLine` - CLI parsing
 - `System.Text.Json` - JSON serialization
+- `YamlDotNet` - YAML configuration parsing
 - `DotNetEnv` - .env file loading
 - `Microsoft.Extensions.FileSystemGlobbing` - Glob pattern matching
 - `FluentAssertions` - Test assertions
@@ -204,8 +210,8 @@ Task<PolicyDecision> EvaluateAsync(ITool tool, string argsJson)
 | Variable | Purpose |
 |----------|---------|
 | `ANTHROPIC_API_KEY` | Anthropic API authentication |
-| `OPENAI_API_KEY` | OpenAI API authentication |
-| `OPENAI_BASE_URL` | Custom OpenAI-compatible endpoint |
+| `OPENAI_API_KEY` | OpenAI API authentication (optional for openai-compatible) |
+| `OPENAI_BASE_URL` | Custom base URL for OpenAI provider (optional) |
 
 **Note:** Environment variables can be loaded from a `.env` file in the repository root. The `.env` file is automatically loaded at startup.
 
@@ -214,8 +220,9 @@ Task<PolicyDecision> EvaluateAsync(ITool tool, string argsJson)
 | Option | Alias | Description | Default |
 |--------|-------|-------------|---------|
 | `--repo` | `-r` | Repository root path | Current directory |
-| `--provider` | `-p` | LLM provider (openai\|anthropic) | openai |
-| `--model` | `-m` | Model name | Provider-specific |
+| `--provider` | `-p` | LLM provider (openai\|anthropic\|openai-compatible) | From config or openai |
+| `--model` | `-m` | Model name | From config or provider-specific |
+| `--config` | `-c` | Path to YAML config file | asdv.yaml in repo root |
 | `--yes` | `-y` | Auto-approve all tool calls | false |
 | `--session` | `-s` | Session log file path | Auto-generated |
 | `--session-id` | `--sid` | Session ID for resume/new session | Auto-generated |
@@ -223,4 +230,26 @@ Task<PolicyDecision> EvaluateAsync(ITool tool, string argsJson)
 | `--max-iterations` | | Maximum agent iterations | 20 |
 | `--debug` | `-d` | Enable debug output (stack traces) | false |
 
-**Note:** `--session` and `--session-id` are mutually exclusive. Use `--session` for custom paths, `--session-id` for managed sessions under `.agent/`.
+**Notes:**
+- `--session` and `--session-id` are mutually exclusive. Use `--session` for custom paths, `--session-id` for managed sessions under `.agent/`.
+- CLI options override YAML config values when both are present.
+
+## YAML Configuration (asdv.yaml)
+
+You can create an `asdv.yaml` file in your repository root to set default configuration:
+
+```yaml
+provider: openai-compatible
+model: gpt-oss-20b
+openaiCompatibleEndpoint: http://127.0.0.1:8080
+```
+
+**Configuration Keys:**
+
+| Key | Description | Example |
+|-----|-------------|---------|
+| `provider` | LLM provider (openai\|anthropic\|openai-compatible) | `openai-compatible` |
+| `model` | Model name | `gpt-oss-20b` |
+| `openaiCompatibleEndpoint` | Endpoint URL for openai-compatible provider | `http://127.0.0.1:8080` |
+
+**Priority:** CLI options > YAML config > Built-in defaults
