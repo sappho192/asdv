@@ -7,7 +7,8 @@
   </PropertyGroup>
 
   <PropertyGroup>
-    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <!-- RuntimeIdentifier removed to support cross-platform development -->
+    <!-- Specify at publish time: dotnet publish -r win-x64 or -r osx-x64 -->
     <SelfContained>false</SelfContained>
     <PublishSingleFile>true</PublishSingleFile>
   </PropertyGroup>
