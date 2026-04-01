@@ -40,6 +40,11 @@ public class FileEditTool : ITool
             return ToolResult.Failure($"File not found: {filePath}");
         }
 
+        if (string.IsNullOrEmpty(oldString))
+        {
+            return ToolResult.Failure("old_string must not be empty.");
+        }
+
         var content = await File.ReadAllTextAsync(fullPath, ct);
 
         var count = CountOccurrences(content, oldString);

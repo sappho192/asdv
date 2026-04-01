@@ -86,7 +86,7 @@ public sealed class SessionRuntimeFactory
             Workspace = workspace,
             MaxIterations = 20,
             MaxTokens = 4096,
-            SystemPrompt = SystemPromptProvider.GetSystemPrompt()
+            SystemPrompt = SystemPromptProvider.GetSystemPrompt(toolRegistry, repoRoot)
         };
 
         var runtime = new SessionRuntime(
@@ -202,6 +202,7 @@ public sealed class SessionRuntimeFactory
         registry.Register(new SearchTextTool());
         registry.Register(new GitStatusTool());
         registry.Register(new GitDiffTool());
+        registry.Register(new FileEditTool());
         registry.Register(new ApplyPatchTool());
         registry.Register(new RunCommandTool());
 

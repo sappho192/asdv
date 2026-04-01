@@ -55,12 +55,14 @@ public class ListFilesTool : ITool
 
         var result = matcher.Execute(new DirectoryInfoWrapper(new DirectoryInfo(searchRoot)));
 
-        IEnumerable<string> filePaths = result.Files.Select(f => f.Path.Replace('\\', '/'));
+        // Prefix subPath to make paths repo-root-relative (Matcher returns paths relative to searchRoot)
+        var prefix = !string.IsNullOrWhiteSpace(subPath) ? subPath.TrimEnd('/').Replace('\\', '/') + "/" : "";
+        IEnumerable<string> filePaths = result.Files.Select(f => prefix + f.Path.Replace('\\', '/'));
 
         if (sortBy == "modified")
         {
             filePaths = filePaths
-                .Select(f => (path: f, mtime: File.GetLastWriteTimeUtc(Path.Combine(searchRoot, f))))
+                .Select(f => (path: f, mtime: File.GetLastWriteTimeUtc(Path.Combine(ctx.RepoRoot, f))))
                 .OrderByDescending(x => x.mtime)
                 .Select(x => x.path);
         }

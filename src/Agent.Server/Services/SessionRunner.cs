@@ -43,7 +43,8 @@ public sealed class SessionRunner
         CoreEvents.TextDelta d => new TextDeltaEvent(d.Text),
         CoreEvents.ToolCallReady r => new ToolCallEvent(r.CallId, r.ToolName, r.ArgsJson),
         CoreEvents.ToolExecutionCompleted c => new Models.ToolResultEvent(c.CallId, c.ToolName, c.Result),
-        CoreEvents.ApprovalRequested a => new ApprovalRequiredEvent(a.CallId, a.ToolName, a.ArgsJson, "RequiresApproval"),
+        // ApprovalRequested is not mapped here — ServerApprovalService already writes
+        // ApprovalRequiredEvent directly to the channel when approval is requested internally.
         CoreEvents.TraceEvent t when t.Kind == "error" => new Models.TraceEvent(t.Kind, t.Data),
         CoreEvents.AgentCompleted c => new CompletedEvent(c.Reason),
         CoreEvents.AgentError e => new ErrorEvent(e.Message),

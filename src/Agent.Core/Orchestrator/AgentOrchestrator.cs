@@ -156,12 +156,6 @@ public class AgentOrchestrator
                 await LogMessageAsync(toolMessage);
 
                 yield return new ToolExecutionCompleted(toolCall.CallId, toolCall.ToolName, result.Result);
-
-                // Yield approval events if they occurred
-                if (result.ApprovalRequested)
-                    yield return new ApprovalRequested(toolCall.CallId, toolCall.ToolName, toolCall.ArgsJson);
-                if (result.ApprovalResolved)
-                    yield return new ApprovalResult(toolCall.CallId, result.Result.Ok || result.ApprovalGranted);
             }
         }
 
