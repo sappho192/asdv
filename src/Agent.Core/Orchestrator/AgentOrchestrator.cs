@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using System.Text;
 using System.Text.Json;
 using Agent.Core.Approval;
@@ -35,71 +36,70 @@ public class AgentOrchestrator
         _options = options;
     }
 
-    public async Task RunAsync(
+    public async IAsyncEnumerable<AgentEvent> RunStreamAsync(
         string userPrompt,
-        List<ChatMessage>? messages = null,
-        CancellationToken ct = default)
+        List<ChatMessage> messages,
+        [EnumeratorCancellation] CancellationToken ct = default)
     {
-        messages ??= new List<ChatMessage>();
         var userMessage = new UserMessage(userPrompt);
         messages.Add(userMessage);
 
         await _logger.LogAsync(new { type = "user_prompt", content = userPrompt });
         await LogMessageAsync(userMessage);
 
-        var exhausted = true;
         for (int iteration = 0; iteration < _options.MaxIterations; iteration++)
         {
+            yield return new IterationStarted(iteration, _options.MaxIterations);
+
             var request = BuildRequest(messages);
             var pendingToolCalls = new List<ToolCallReady>();
             var textBuffer = new StringBuilder();
-            var formatter = new TextStreamFormatter();
-
             var completedStop = false;
             string? stopReason = null;
             string? errorDetails = null;
+
             await foreach (var evt in _provider.StreamAsync(request, ct))
             {
                 await _logger.LogAsync(new { type = "event", eventType = evt.GetType().Name, data = evt });
 
                 switch (evt)
                 {
-                    case TextDelta delta:
-                        var rendered = formatter.Format(delta.Text);
-                        Console.Write(rendered);
-                        textBuffer.Append(delta.Text);
+                    case TextDelta:
+                        textBuffer.Append(((TextDelta)evt).Text);
+                        yield return evt;
                         break;
 
-                    case ToolCallStarted started:
-                        Console.Write(formatter.Flush());
-                        Console.WriteLine();
-                        Console.ForegroundColor = ConsoleColor.Cyan;
-                        Console.Write($"[tool] {started.ToolName}");
-                        Console.ResetColor();
+                    case ToolCallStarted:
+                        yield return evt;
+                        break;
+
+                    case ToolCallArgsDelta:
+                        yield return evt;
                         break;
 
                     case ToolCallReady ready:
-                        Console.WriteLine($" args={TruncateJson(ready.ArgsJson, 100)}");
                         pendingToolCalls.Add(ready);
+                        yield return evt;
                         break;
 
                     case TraceEvent trace when trace.Kind == "error":
                         errorDetails = trace.Data;
-                        Console.Write(formatter.Flush());
-                        Console.ForegroundColor = ConsoleColor.Red;
-                        Console.WriteLine($"[Provider error] {trace.Data}");
-                        Console.ResetColor();
+                        yield return evt;
                         break;
 
                     case ResponseCompleted completed:
-                        Console.Write(formatter.Flush());
-                        Console.WriteLine();
                         stopReason = completed.StopReason;
                         completedStop = IsCompletionStopReason(completed.StopReason);
+                        yield return evt;
+                        break;
+
+                    default:
+                        yield return evt;
                         break;
                 }
             }
 
+            // Build assistant message from accumulated text and tool calls
             AssistantMessage? assistantMessage = null;
             if (textBuffer.Length > 0 || pendingToolCalls.Count > 0)
             {
@@ -117,75 +117,82 @@ public class AgentOrchestrator
                 await LogMessageAsync(assistantMessage);
             }
 
+            yield return new AssistantMessageCompleted(
+                textBuffer.Length > 0 ? textBuffer.ToString() : null,
+                pendingToolCalls.Count);
+
+            // Check termination conditions
             if (pendingToolCalls.Count == 0 && completedStop)
             {
-                Console.ForegroundColor = ConsoleColor.Green;
-                Console.WriteLine("[Agent completed]");
-                Console.ResetColor();
-                return;
+                yield return new AgentCompleted(stopReason ?? "end_turn");
+                yield break;
             }
 
             if (pendingToolCalls.Count == 0 && textBuffer.Length == 0 && !completedStop)
             {
                 var reason = stopReason ?? "unknown";
-                Console.ForegroundColor = ConsoleColor.Yellow;
-                Console.WriteLine($"[No response] stop_reason={reason}");
+                var msg = $"No response. stop_reason={reason}";
                 if (!string.IsNullOrWhiteSpace(errorDetails))
-                {
-                    Console.WriteLine($"[Provider error] {errorDetails}");
-                }
-                Console.ResetColor();
-                return;
+                    msg += $". error={errorDetails}";
+                yield return new AgentError(msg);
+                yield break;
             }
 
-            if (pendingToolCalls.Count > 0)
+            if (pendingToolCalls.Count == 0)
             {
-                foreach (var toolCall in pendingToolCalls)
-                {
-                    var result = await ExecuteToolCallAsync(toolCall, ct);
-                    var toolMessage = new ToolResultMessage(toolCall.CallId, toolCall.ToolName, result);
-                    messages.Add(toolMessage);
-                    await LogMessageAsync(toolMessage);
-
-                    PrintToolResult(toolCall.ToolName, result);
-                }
+                // Text-only response, no tool calls, not a completion stop — break loop
+                yield break;
             }
-            else
+
+            // Execute tool calls
+            foreach (var toolCall in pendingToolCalls)
             {
-                exhausted = false;
-                break;
+                yield return new ToolExecutionStarted(toolCall.CallId, toolCall.ToolName, toolCall.ArgsJson);
+
+                var result = await ExecuteToolCallWithEventsAsync(toolCall, ct);
+
+                var toolMessage = new ToolResultMessage(toolCall.CallId, toolCall.ToolName, result.Result);
+                messages.Add(toolMessage);
+                await LogMessageAsync(toolMessage);
+
+                yield return new ToolExecutionCompleted(toolCall.CallId, toolCall.ToolName, result.Result);
             }
         }
 
-        if (exhausted)
-        {
-            Console.ForegroundColor = ConsoleColor.Yellow;
-            Console.WriteLine("[Max iterations reached]");
-            Console.ResetColor();
-        }
+        yield return new MaxIterationsReached(_options.MaxIterations);
     }
 
-    private async Task<ToolResult> ExecuteToolCallAsync(ToolCallReady toolCall, CancellationToken ct)
+    private async Task<ToolExecutionResult> ExecuteToolCallWithEventsAsync(
+        ToolCallReady toolCall, CancellationToken ct)
     {
+        var executionResult = new ToolExecutionResult();
+
         var tool = _toolRegistry.GetTool(toolCall.ToolName);
         if (tool == null)
         {
-            return ToolResult.Failure($"Unknown tool: {toolCall.ToolName}");
+            executionResult.Result = ToolResult.Failure($"Unknown tool: {toolCall.ToolName}");
+            return executionResult;
         }
 
         var decision = await _policyEngine.EvaluateAsync(tool, toolCall.ArgsJson);
         if (decision == PolicyDecision.Denied)
         {
-            return ToolResult.Failure("Tool execution denied by policy");
+            executionResult.Result = ToolResult.Failure("Tool execution denied by policy");
+            return executionResult;
         }
 
         if (decision == PolicyDecision.RequiresApproval)
         {
+            executionResult.ApprovalRequested = true;
             var approved = await _approvalService.RequestApprovalAsync(
                 tool.Name, toolCall.ArgsJson, toolCall.CallId, ct);
+            executionResult.ApprovalResolved = true;
+            executionResult.ApprovalGranted = approved;
+
             if (!approved)
             {
-                return ToolResult.Failure("User denied approval");
+                executionResult.Result = ToolResult.Failure("User denied approval");
+                return executionResult;
             }
         }
 
@@ -199,21 +206,22 @@ public class AgentOrchestrator
                 ApprovalService = _approvalService
             };
 
-            var result = await tool.ExecuteAsync(args, context, ct);
+            executionResult.Result = await tool.ExecuteAsync(args, context, ct);
             await _logger.LogAsync(new
             {
                 type = "tool_result",
                 callId = toolCall.CallId,
                 tool = toolCall.ToolName,
-                ok = result.Ok,
-                diagnostics = result.Diagnostics
+                ok = executionResult.Result.Ok,
+                diagnostics = executionResult.Result.Diagnostics
             });
 
-            return result;
+            return executionResult;
         }
         catch (Exception ex)
         {
-            return ToolResult.Failure($"Tool execution failed: {ex.Message}");
+            executionResult.Result = ToolResult.Failure($"Tool execution failed: {ex.Message}");
+            return executionResult;
         }
     }
 
@@ -228,42 +236,6 @@ public class AgentOrchestrator
             MaxTokens = _options.MaxTokens,
             Temperature = _options.Temperature
         };
-    }
-
-    private static void PrintToolResult(string toolName, ToolResult result)
-    {
-        if (result.Ok)
-        {
-            Console.ForegroundColor = ConsoleColor.Green;
-            Console.WriteLine($"  [{toolName}] OK");
-        }
-        else
-        {
-            Console.ForegroundColor = ConsoleColor.Red;
-            Console.WriteLine($"  [{toolName}] FAILED: {result.Diagnostics?.FirstOrDefault()?.Message}");
-        }
-        Console.ResetColor();
-
-        if (!string.IsNullOrEmpty(result.Stdout))
-        {
-            var preview = TruncateString(result.Stdout, 200);
-            Console.ForegroundColor = ConsoleColor.DarkGray;
-            Console.WriteLine($"  stdout: {preview}");
-            Console.ResetColor();
-        }
-    }
-
-    private static string TruncateJson(string json, int maxLength)
-    {
-        if (json.Length <= maxLength) return json;
-        return json[..maxLength] + "...";
-    }
-
-    private static string TruncateString(string str, int maxLength)
-    {
-        var singleLine = str.Replace("\r", "").Replace("\n", " ");
-        if (singleLine.Length <= maxLength) return singleLine;
-        return singleLine[..maxLength] + "...";
     }
 
     private static bool IsCompletionStopReason(string? stopReason)
@@ -305,98 +277,11 @@ public class AgentOrchestrator
         };
     }
 
-    private sealed class TextStreamFormatter
+    private sealed class ToolExecutionResult
     {
-        private bool _inCodeBlock;
-        private int _backtickRun;
-        private bool _pendingBackslash;
-
-        public string Format(string text)
-        {
-            if (string.IsNullOrEmpty(text))
-            {
-                return string.Empty;
-            }
-
-            var output = new StringBuilder(text.Length);
-
-            foreach (var ch in text)
-            {
-                if (_pendingBackslash)
-                {
-                    if (ch == 'n' && !_inCodeBlock)
-                    {
-                        output.AppendLine();
-                    }
-                    else
-                    {
-                        output.Append('\\');
-                        ProcessChar(ch, output);
-                    }
-
-                    _pendingBackslash = false;
-                    continue;
-                }
-
-                if (ch == '\\')
-                {
-                    _pendingBackslash = true;
-                    continue;
-                }
-
-                ProcessChar(ch, output);
-            }
-
-            return output.ToString();
-        }
-
-        public string Flush()
-        {
-            var output = new StringBuilder();
-
-            if (_pendingBackslash)
-            {
-                output.Append('\\');
-                _pendingBackslash = false;
-            }
-
-            FlushBackticks(output);
-            return output.ToString();
-        }
-
-        private void ProcessChar(char ch, StringBuilder output)
-        {
-            if (ch == '`')
-            {
-                _backtickRun++;
-                return;
-            }
-
-            FlushBackticks(output);
-            output.Append(ch);
-        }
-
-        private void FlushBackticks(StringBuilder output)
-        {
-            if (_backtickRun == 0)
-            {
-                return;
-            }
-
-            var remaining = _backtickRun;
-            while (remaining >= 3)
-            {
-                _inCodeBlock = !_inCodeBlock;
-                output.Append("```");
-                remaining -= 3;
-            }
-
-            if (remaining > 0)
-            {
-                output.Append('`', remaining);
-            }
-
-            _backtickRun = 0;
-        }
+        public ToolResult Result { get; set; } = ToolResult.Failure("Not executed");
+        public bool ApprovalRequested { get; set; }
+        public bool ApprovalResolved { get; set; }
+        public bool ApprovalGranted { get; set; }
     }
 }

@@ -1,6 +1,8 @@
 using System.CommandLine;
 using System.Text.Json;
 using Agent.Cli;
+using Agent.Cli.Commands;
+using Agent.Cli.Rendering;
 using Agent.Core.Config;
 using Agent.Core.Approval;
 using Agent.Core.Logging;
@@ -63,6 +65,11 @@ var onceOption = new Option<bool>(
     getDefaultValue: () => false,
     description: "Run a single prompt and exit (non-interactive)");
 
+var resumeModeOption = new Option<string>(
+    aliases: ["--resume-mode"],
+    getDefaultValue: () => "full",
+    description: "Resume mode: full|summary|last-N (e.g., last-5)");
+
 var promptArgument = new Argument<string?>(
     name: "prompt",
     description: "Task prompt for the agent")
@@ -70,7 +77,7 @@ var promptArgument = new Argument<string?>(
     Arity = ArgumentArity.ZeroOrOne
 };
 
-var rootCommand = new RootCommand("ASDV - Claude Code style")
+var rootCommand = new RootCommand("ASDV - Your AI Coding Assistant")
 {
     repoOption,
     providerOption,
@@ -82,6 +89,7 @@ var rootCommand = new RootCommand("ASDV - Claude Code style")
     debugOption,
     onceOption,
     configOption,
+    resumeModeOption,
     promptArgument
 };
 
@@ -97,6 +105,7 @@ rootCommand.SetHandler(async (context) =>
     var debug = context.ParseResult.GetValueForOption(debugOption);
     var once = context.ParseResult.GetValueForOption(onceOption);
     var config = context.ParseResult.GetValueForOption(configOption);
+    var resumeMode = context.ParseResult.GetValueForOption(resumeModeOption)!;
     var prompt = context.ParseResult.GetValueForArgument(promptArgument);
 
     var ct = context.GetCancellationToken();
@@ -112,6 +121,7 @@ rootCommand.SetHandler(async (context) =>
         debug,
         once,
         config,
+        resumeMode,
         prompt,
         ct);
 });
@@ -129,6 +139,7 @@ static async Task RunAgentAsync(
     bool debug,
     bool once,
     string? config,
+    string resumeMode,
     string? prompt,
     CancellationToken ct)
 {
@@ -220,7 +231,8 @@ static async Task RunAgentAsync(
     var messages = new List<Agent.Core.Messages.ChatMessage>();
     if (resumed)
     {
-        messages = SessionLogReader.LoadMessages(sessionPath, warning =>
+        var (parsedResumeMode, lastN) = ParseResumeMode(resumeMode);
+        messages = SessionLogReader.LoadMessages(sessionPath, parsedResumeMode, lastN, warning =>
         {
             if (debug)
             {
@@ -229,6 +241,13 @@ static async Task RunAgentAsync(
                 Console.ResetColor();
             }
         });
+
+        if (parsedResumeMode != ResumeMode.Full)
+        {
+            Console.ForegroundColor = ConsoleColor.DarkGray;
+            Console.WriteLine($"  Resume mode: {resumeMode} ({messages.Count} messages loaded)");
+            Console.ResetColor();
+        }
     }
 
     ISessionLogger logger;
@@ -253,7 +272,7 @@ static async Task RunAgentAsync(
         Workspace = workspace,
         MaxIterations = maxIterations,
         MaxTokens = 4096,
-        SystemPrompt = GetSystemPrompt()
+        SystemPrompt = GetSystemPrompt(toolRegistry, repoRoot)
     };
 
     // Print header
@@ -311,11 +330,29 @@ static async Task RunAgentAsync(
             mode = once ? "once" : "repl"
         });
 
+        var renderer = new ConsoleEventRenderer();
+
+        // Set up command system
+        var commandRegistry = new CommandRegistry();
+        var commandContext = new CommandContext
+        {
+            ProviderName = resolvedProvider,
+            ModelName = resolvedModel,
+            SessionId = sessionId,
+            SessionPath = sessionPath,
+            RepoRoot = repoRoot,
+            AutoApprove = autoApprove
+        };
+        commandRegistry.Register(new StatusCommand());
+        commandRegistry.Register(new DiffCommand());
+        // HelpCommand needs registry reference — register last
+        commandRegistry.Register(new HelpCommand(commandRegistry));
+
         if (once)
         {
             if (!string.IsNullOrWhiteSpace(prompt))
             {
-                await orchestrator.RunAsync(prompt, messages, ct);
+                await RunStreamToConsoleAsync(orchestrator, renderer, prompt, messages, ct);
             }
 
             return;
@@ -327,7 +364,7 @@ static async Task RunAgentAsync(
 
         if (!string.IsNullOrWhiteSpace(prompt))
         {
-            await orchestrator.RunAsync(prompt, messages, ct);
+            await RunStreamToConsoleAsync(orchestrator, renderer, prompt, messages, ct);
         }
 
         while (true)
@@ -349,18 +386,27 @@ static async Task RunAgentAsync(
                 break;
             }
 
-            if (string.Equals(input, "/help", StringComparison.OrdinalIgnoreCase))
-            {
-                Console.WriteLine("Commands: /exit, /quit, /help");
-                continue;
-            }
-
             if (string.IsNullOrWhiteSpace(input))
             {
                 continue;
             }
 
-            await orchestrator.RunAsync(input, messages, ct);
+            if (input.StartsWith("/"))
+            {
+                if (commandRegistry.TryExecute(input, commandContext, out var cmdTask))
+                {
+                    await cmdTask;
+                }
+                else
+                {
+                    Console.ForegroundColor = ConsoleColor.Yellow;
+                    Console.WriteLine($"Unknown command: {input}. Type /help for available commands.");
+                    Console.ResetColor();
+                }
+                continue;
+            }
+
+            await RunStreamToConsoleAsync(orchestrator, renderer, input, messages, ct);
         }
     }
     catch (OperationCanceledException)
@@ -527,44 +573,42 @@ static ToolRegistry CreateToolRegistry()
     registry.Register(new GitDiffTool());
 
     // Write/execute tools
+    registry.Register(new FileEditTool());
     registry.Register(new ApplyPatchTool());
     registry.Register(new RunCommandTool());
 
     return registry;
 }
 
-static string GetSystemPrompt()
+static string GetSystemPrompt(ToolRegistry toolRegistry, string repoRoot)
 {
-    return """
+    var toolDescriptions = toolRegistry.GetToolDescriptionsMarkdown();
+
+    // Load optional project-level prompt customization
+    var projectPromptPath = Path.Combine(repoRoot, ".asdv", "prompt.md");
+    var projectPrompt = File.Exists(projectPromptPath)
+        ? Environment.NewLine + File.ReadAllText(projectPromptPath)
+        : "";
+
+    return $"""
         You are a coding assistant that helps developers with tasks in their local repository.
 
         ## Available Tools
 
-        ### Reading & Exploration
-        - **ReadFile**: Read file contents (supports line ranges)
-        - **ListFiles**: List files matching glob patterns (e.g., **/*.cs)
-        - **SearchText**: Search for text patterns using regex
-
-        ### Git Operations
-        - **GitStatus**: Get current repository status
-        - **GitDiff**: View changes (staged or unstaged)
-
-        ### Modifications
-        - **ApplyPatch**: Apply unified diff patches to modify files
-        - **RunCommand**: Execute shell commands (requires approval)
-
+        {toolDescriptions}
         ## Guidelines
 
         1. **Understand First**: Always read relevant files before making changes
         2. **Search Effectively**: Use SearchText to locate code patterns
-        3. **Precise Changes**: Generate minimal, focused unified diff patches
+        3. **Precise Edits**: Use FileEdit for targeted string replacements, or ApplyPatch for larger changes
         4. **Verify Results**: Check git status/diff after modifications
         5. **Test Changes**: Run tests when appropriate
         6. **Explain Actions**: Briefly describe what you're doing and why
 
-        ## Patch Format
+        ## Edit Strategies
 
-        When modifying files, prefer unified diff format:
+        For small, targeted changes, prefer FileEdit (exact string replacement).
+        For larger or multi-site changes, use ApplyPatch with unified diff format:
         ```
         --- a/path/to/file.cs
         +++ b/path/to/file.cs
@@ -575,16 +619,37 @@ static string GetSystemPrompt()
          context line
         ```
 
-        The ApplyPatch tool also accepts the "Begin Patch" format:
-        ```
-        *** Begin Patch
-        *** Add File: path/to/file.cs
-        +new line
-        *** End Patch
-        ```
-
-        Keep patches minimal and focused on the specific change needed.
+        Keep changes minimal and focused on the specific task.
+        {projectPrompt}
         """;
+}
+
+static async Task RunStreamToConsoleAsync(
+    AgentOrchestrator orchestrator,
+    ConsoleEventRenderer renderer,
+    string prompt,
+    List<Agent.Core.Messages.ChatMessage> messages,
+    CancellationToken ct)
+{
+    await foreach (var evt in orchestrator.RunStreamAsync(prompt, messages, ct))
+    {
+        renderer.Render(evt);
+    }
+}
+
+static (ResumeMode mode, int lastN) ParseResumeMode(string input)
+{
+    if (string.Equals(input, "full", StringComparison.OrdinalIgnoreCase))
+        return (ResumeMode.Full, 0);
+
+    if (string.Equals(input, "summary", StringComparison.OrdinalIgnoreCase))
+        return (ResumeMode.Summary, 0);
+
+    if (input.StartsWith("last-", StringComparison.OrdinalIgnoreCase)
+        && int.TryParse(input[5..], out var n) && n > 0)
+        return (ResumeMode.LastN, n);
+
+    return (ResumeMode.Full, 0);
 }
 
 static string GenerateSessionId()
