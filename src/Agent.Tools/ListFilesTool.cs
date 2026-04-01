@@ -16,7 +16,8 @@ public class ListFilesTool : ITool
         "type": "object",
         "properties": {
             "glob": { "type": "string", "description": "Glob pattern (e.g., **/*.cs)" },
-            "maxDepth": { "type": "integer", "default": 10 }
+            "path": { "type": "string", "description": "Subdirectory to search in (relative, default: repo root)" },
+            "sortBy": { "type": "string", "enum": ["name", "modified"], "description": "Sort order (default: name)" }
         },
         "required": ["glob"]
     }
@@ -25,6 +26,23 @@ public class ListFilesTool : ITool
     public Task<ToolResult> ExecuteAsync(JsonElement args, ToolContext ctx, CancellationToken ct)
     {
         var glob = args.GetProperty("glob").GetString()!;
+        var subPath = args.TryGetProperty("path", out var p) ? p.GetString() : null;
+        var sortBy = args.TryGetProperty("sortBy", out var s) ? s.GetString() : "name";
+
+        var searchRoot = ctx.RepoRoot;
+        if (!string.IsNullOrWhiteSpace(subPath))
+        {
+            var resolved = ctx.Workspace.ResolvePath(subPath);
+            if (resolved == null)
+            {
+                return Task.FromResult(ToolResult.Failure($"Path outside repo: {subPath}"));
+            }
+            if (!Directory.Exists(resolved))
+            {
+                return Task.FromResult(ToolResult.Failure($"Directory not found: {subPath}"));
+            }
+            searchRoot = resolved;
+        }
 
         var matcher = new Matcher();
         matcher.AddInclude(glob);
@@ -35,16 +53,24 @@ public class ListFilesTool : ITool
         matcher.AddExclude("**/bin/**");
         matcher.AddExclude("**/obj/**");
 
-        var result = matcher.Execute(new DirectoryInfoWrapper(new DirectoryInfo(ctx.RepoRoot)));
+        var result = matcher.Execute(new DirectoryInfoWrapper(new DirectoryInfo(searchRoot)));
 
-        var files = result.Files
-            .Select(f => f.Path.Replace('\\', '/'))
-            .Take(500)
-            .ToList();
+        IEnumerable<string> filePaths = result.Files.Select(f => f.Path.Replace('\\', '/'));
+
+        if (sortBy == "modified")
+        {
+            filePaths = filePaths
+                .Select(f => (path: f, mtime: File.GetLastWriteTimeUtc(Path.Combine(searchRoot, f))))
+                .OrderByDescending(x => x.mtime)
+                .Select(x => x.path);
+        }
+
+        var files = filePaths.Take(500).ToList();
 
         return Task.FromResult(ToolResult.Success(new
         {
             pattern = glob,
+            searchRoot = searchRoot == ctx.RepoRoot ? "." : subPath,
             count = files.Count,
             files
         }));

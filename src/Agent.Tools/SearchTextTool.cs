@@ -18,7 +18,9 @@ public class SearchTextTool : ITool
             "query": { "type": "string", "description": "Search pattern (regex supported)" },
             "includeGlobs": { "type": "array", "items": { "type": "string" }, "description": "Glob patterns to include" },
             "excludeGlobs": { "type": "array", "items": { "type": "string" }, "description": "Glob patterns to exclude" },
-            "maxResults": { "type": "integer", "default": 50 }
+            "maxResults": { "type": "integer", "default": 50 },
+            "contextLines": { "type": "integer", "description": "Number of context lines before and after each match (default: 0)" },
+            "caseSensitive": { "type": "boolean", "description": "Case-sensitive search (default: false)" }
         },
         "required": ["query"]
     }
@@ -31,16 +33,18 @@ public class SearchTextTool : ITool
     {
         var query = args.GetProperty("query").GetString()!;
         var maxResults = args.TryGetProperty("maxResults", out var m) ? m.GetInt32() : 50;
+        var contextLines = args.TryGetProperty("contextLines", out var cl) ? cl.GetInt32() : 0;
+        var caseSensitive = args.TryGetProperty("caseSensitive", out var cs) && cs.GetBoolean();
 
         // Try ripgrep first if available
         var rgPath = FindRipgrep();
         if (rgPath != null)
         {
-            return await SearchWithRipgrepAsync(rgPath, query, ctx.RepoRoot, maxResults, ct);
+            return await SearchWithRipgrepAsync(rgPath, query, ctx.RepoRoot, maxResults, contextLines, caseSensitive, ct);
         }
 
         // Fallback to manual search
-        return await SearchManuallyAsync(query, ctx.RepoRoot, maxResults, ct);
+        return await SearchManuallyAsync(query, ctx.RepoRoot, maxResults, contextLines, caseSensitive, ct);
     }
 
     private static string? FindRipgrep()
@@ -65,7 +69,8 @@ public class SearchTextTool : ITool
     }
 
     private async Task<ToolResult> SearchWithRipgrepAsync(
-        string rgPath, string query, string root, int maxResults, CancellationToken ct)
+        string rgPath, string query, string root, int maxResults,
+        int contextLines, bool caseSensitive, CancellationToken ct)
     {
         var psi = new ProcessStartInfo
         {
@@ -80,6 +85,15 @@ public class SearchTextTool : ITool
         psi.ArgumentList.Add("--json");
         psi.ArgumentList.Add("-m");
         psi.ArgumentList.Add(maxResults.ToString());
+        if (contextLines > 0)
+        {
+            psi.ArgumentList.Add("-C");
+            psi.ArgumentList.Add(contextLines.ToString());
+        }
+        if (!caseSensitive)
+        {
+            psi.ArgumentList.Add("-i");
+        }
         psi.ArgumentList.Add("--");
         psi.ArgumentList.Add(query);
 
@@ -139,12 +153,16 @@ public class SearchTextTool : ITool
     }
 
     private async Task<ToolResult> SearchManuallyAsync(
-        string query, string root, int maxResults, CancellationToken ct)
+        string query, string root, int maxResults, int contextLines, bool caseSensitive,
+        CancellationToken ct)
     {
         Regex regex;
         try
         {
-            regex = new Regex(query, RegexOptions.IgnoreCase | RegexOptions.Compiled);
+            var regexOptions = RegexOptions.Compiled;
+            if (!caseSensitive)
+                regexOptions |= RegexOptions.IgnoreCase;
+            regex = new Regex(query, regexOptions);
         }
         catch (ArgumentException ex)
         {
@@ -160,16 +178,36 @@ public class SearchTextTool : ITool
             try
             {
                 var lines = await File.ReadAllLinesAsync(file, ct);
+                var relPath = Path.GetRelativePath(root, file).Replace('\\', '/');
                 for (int i = 0; i < lines.Length && results.Count < maxResults; i++)
                 {
                     if (regex.IsMatch(lines[i]))
                     {
-                        results.Add(new
+                        if (contextLines > 0)
                         {
-                            file = Path.GetRelativePath(root, file).Replace('\\', '/'),
-                            line = i + 1,
-                            content = lines[i].Trim()
-                        });
+                            var ctxStart = Math.Max(0, i - contextLines);
+                            var ctxEnd = Math.Min(lines.Length - 1, i + contextLines);
+                            var context = string.Join("\n",
+                                Enumerable.Range(ctxStart, ctxEnd - ctxStart + 1)
+                                    .Select(j => $"{j + 1}: {lines[j]}"));
+                            results.Add(new
+                            {
+                                file = relPath,
+                                line = i + 1,
+                                content = lines[i].Trim(),
+                                context
+                            });
+                        }
+                        else
+                        {
+                            results.Add(new
+                            {
+                                file = relPath,
+                                line = i + 1,
+                                content = lines[i].Trim(),
+                                context = (string?)null
+                            });
+                        }
                     }
                 }
             }

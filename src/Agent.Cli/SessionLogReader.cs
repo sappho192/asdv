@@ -4,12 +4,33 @@ using Agent.Core.Tools;
 
 namespace Agent.Cli;
 
+public enum ResumeMode
+{
+    Full,
+    Summary,
+    LastN
+}
+
 internal static class SessionLogReader
 {
     private static readonly JsonSerializerOptions SerializerOptions = new()
     {
         PropertyNameCaseInsensitive = true
     };
+
+    public static List<ChatMessage> LoadMessages(
+        string sessionPath, ResumeMode mode, int lastN, Action<string>? warn = null)
+    {
+        var allMessages = LoadMessages(sessionPath, warn);
+
+        return mode switch
+        {
+            ResumeMode.Full => allMessages,
+            ResumeMode.LastN => TakeLastTurns(allMessages, lastN),
+            ResumeMode.Summary => GenerateSummaryMessages(allMessages),
+            _ => allMessages
+        };
+    }
 
     public static List<ChatMessage> LoadMessages(string sessionPath, Action<string>? warn = null)
     {
@@ -136,5 +157,70 @@ internal static class SessionLogReader
         }
 
         return new ToolResultMessage(callId, toolName, result);
+    }
+
+    private static List<ChatMessage> TakeLastTurns(List<ChatMessage> messages, int turnCount)
+    {
+        if (turnCount <= 0 || messages.Count == 0)
+            return new List<ChatMessage>();
+
+        // A "turn" starts with a UserMessage. Walk backwards to find the start of the Nth-last turn.
+        var turnStarts = new List<int>();
+        for (int i = 0; i < messages.Count; i++)
+        {
+            if (messages[i] is UserMessage)
+                turnStarts.Add(i);
+        }
+
+        if (turnStarts.Count == 0)
+            return new List<ChatMessage>();
+
+        var startIndex = turnStarts[Math.Max(0, turnStarts.Count - turnCount)];
+        return messages.GetRange(startIndex, messages.Count - startIndex);
+    }
+
+    private static List<ChatMessage> GenerateSummaryMessages(List<ChatMessage> messages)
+    {
+        if (messages.Count == 0)
+            return new List<ChatMessage>();
+
+        // Extract metadata from the conversation
+        var userPrompts = new List<string>();
+        var toolNames = new HashSet<string>();
+        int assistantCount = 0;
+
+        foreach (var msg in messages)
+        {
+            switch (msg)
+            {
+                case UserMessage user:
+                    userPrompts.Add(user.Content.Length > 80
+                        ? user.Content[..80] + "..."
+                        : user.Content);
+                    break;
+                case AssistantMessage:
+                    assistantCount++;
+                    break;
+                case ToolResultMessage tool:
+                    toolNames.Add(tool.ToolName);
+                    break;
+            }
+        }
+
+        var parts = new List<string>
+        {
+            $"Previous session: {userPrompts.Count} user messages, {assistantCount} assistant responses."
+        };
+
+        if (toolNames.Count > 0)
+            parts.Add($"Tools used: {string.Join(", ", toolNames)}.");
+
+        if (userPrompts.Count > 0)
+            parts.Add($"Last user prompt: \"{userPrompts[^1]}\"");
+
+        var summary = string.Join(" ", parts)
+            + "\n\nPlease continue from where we left off. Ask if you need context about prior work.";
+
+        return new List<ChatMessage> { new UserMessage(summary) };
     }
 }

@@ -1,15 +1,18 @@
 # ASDV (Agile Synthetic Dev Vibe)
-A .NET 8 console-based coding agent that operates on local repositories, inspired by Claude Code.  
- Supports OpenAI, Anthropic, and OpenAI-compatible endpoints with a provider-agnostic architecture.
+A .NET 8 coding agent that operates on local repositories with a clean, event-driven architecture.  
+Supports OpenAI, Anthropic, and OpenAI-compatible endpoints (llama.cpp, vLLM, Ollama, OpenRouter) with full provider freedom.
 
 ## Features
 
-- **Provider-agnostic**: Switch between OpenAI, Anthropic, and OpenAI-compatible endpoints
-- **Streaming**: Real-time streaming of model responses via SSE
-- **Tool system**: Extensible tools for file operations, search, git, and command execution
+- **Provider freedom**: Switch between OpenAI, Anthropic, local LLMs, and OpenRouter — no vendor lock-in
+- **Event-driven core**: Unified `IAsyncEnumerable<AgentEvent>` orchestrator shared by CLI and HTTP server
+- **Tool system**: File read/edit, glob search, regex grep, git operations, and shell commands
+- **Interactive commands**: `/status`, `/help`, `/diff` for session inspection
+- **Flexible resume**: Resume sessions with `--resume-mode=full|summary|last-N` for any context window size
 - **Policy-based approval**: Dangerous operations require user approval
 - **Session logging**: JSONL logs for reproducibility and debugging
 - **Path safety**: Prevents path traversal and symlink escape attacks
+- **Project-level prompts**: Drop a `.asdv/prompt.md` to customize the system prompt per project
 
 ## Quick Start
 
@@ -57,6 +60,12 @@ dotnet run --project src/Agent.Cli -- -r /path/to/repo -p anthropic "Review the 
 
 # Use OpenAI-compatible endpoint via config
 dotnet run --project src/Agent.Cli -- -r /path/to/repo -p openai-compatible
+
+# Resume a session with summary mode (ideal for small context windows)
+dotnet run --project src/Agent.Cli -- --session-id abc123 --resume-mode summary
+
+# Resume with only the last 3 turns
+dotnet run --project src/Agent.Cli -- --session-id abc123 --resume-mode last-3
 ```
 
 ### CLI Options
@@ -73,17 +82,20 @@ dotnet run --project src/Agent.Cli -- -r /path/to/repo -p openai-compatible
 | `--once` | | Run a single prompt and exit | `false` |
 | `--max-iterations` | | Maximum agent iterations | `20` |
 | `--debug` | `-d` | Enable debug output (stack traces) | `false` |
+| `--resume-mode` | | Resume mode: `full`, `summary`, `last-N` | `full` |
 
 ## Architecture
 
 ```
 Agent.sln
 src/
-  Agent.Cli/           # Entry point, CLI parsing
-  Agent.Core/          # Orchestrator, events, policies
+  Agent.Cli/           # Entry point, CLI parsing, commands, rendering
+    Commands/          # /status, /help, /diff command implementations
+    Rendering/         # ConsoleEventRenderer, TextStreamFormatter
+  Agent.Core/          # Orchestrator (event-driven), events, policies
   Agent.Llm.Anthropic/ # Claude Messages API provider
   Agent.Llm.OpenAI/    # OpenAI Chat Completions API provider
-  Agent.Tools/         # Tool implementations
+  Agent.Tools/         # Tool implementations (read, edit, search, git, shell)
   Agent.Workspace/     # File system safety
   Agent.Logging/       # JSONL session logging
   Agent.Server/        # HTTP API server for agent sessions
@@ -95,17 +107,36 @@ scripts/
   server-client.mjs    # Node.js client for Agent.Server
 ```
 
+### Event-Driven Architecture
+
+The core orchestrator (`AgentOrchestrator.RunStreamAsync`) returns an `IAsyncEnumerable<AgentEvent>` stream. Both CLI and Server consume this same stream through thin adapters:
+
+- **CLI**: `ConsoleEventRenderer` renders events to the terminal with colors and formatting
+- **Server**: `SessionRunner` maps events to `ServerEvent` types and writes to SSE channels
+
+This eliminates code duplication and ensures both surfaces behave identically.
+
 ### Available Tools
 
 | Tool | Description | Requires Approval |
 |------|-------------|-------------------|
 | `ReadFile` | Read file contents with optional line range | No |
-| `ListFiles` | List files matching glob patterns | No |
-| `SearchText` | Search for text patterns (regex) | No |
+| `ListFiles` | List files matching glob patterns (supports `path`, `sortBy=modified`) | No |
+| `SearchText` | Search for text patterns with regex (supports `contextLines`, `caseSensitive`) | No |
 | `GitStatus` | Get repository status | No |
 | `GitDiff` | View staged/unstaged changes | No |
+| `FileEdit` | Precise string replacement in files | Yes |
 | `ApplyPatch` | Apply unified diff or Begin Patch format patches | Yes |
 | `RunCommand` | Execute shell commands | Yes |
+
+### REPL Commands
+
+| Command | Description |
+|---------|-------------|
+| `/help` | Show available commands |
+| `/status` | Show current session status (provider, model, session ID) |
+| `/diff` | Show git diff summary |
+| `/exit`, `/quit`, `/q` | Exit the REPL |
 
 ## Configuration
 
@@ -121,6 +152,15 @@ scripts/
 
 - **Anthropic**: `claude-sonnet-4-20250514`
 - **OpenAI**: `gpt-5-mini`
+
+### Project-Level Prompt (`.asdv/prompt.md`)
+
+Create a `.asdv/prompt.md` file in your repository root to add project-specific instructions to the system prompt. This is useful for:
+- Defining project conventions and coding standards
+- Adding context about the project architecture
+- Customizing behavior for specific LLM models
+
+The content is appended to the base system prompt automatically.
 
 ### YAML Config (asdv.yaml)
 
@@ -147,7 +187,16 @@ Session logs are saved in JSONL format to `.agent/session_<sessionId>.jsonl` by 
 - **`--session-id <id>`**: Create or resume a session with the specified ID. Sessions are stored as `.agent/session_<id>.jsonl`
 - **`--session <path>`**: Specify a custom path for the session log file (mutually exclusive with `--session-id`)
 - **Session index**: All sessions are tracked in `.agent/sessions.jsonl` for discovery and debugging
-- **Resumption**: When you resume a session with `--session-id`, the agent loads all previous messages and continues the conversation
+
+### Resume Modes
+
+When resuming a session, you can choose how much history to load with `--resume-mode`:
+
+| Mode | Description | Best for |
+|------|-------------|----------|
+| `full` (default) | Load all previous messages | Large context windows (128K+) |
+| `summary` | Generate a structured summary of the session | Small context windows (4K–8K), local LLMs |
+| `last-N` (e.g., `last-3`) | Load only the last N conversation turns | Medium context windows, focused continuation |
 
 ### REPL vs. Once Mode
 
