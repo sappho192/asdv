@@ -15,7 +15,7 @@ public class SessionRuntimeFactoryTests
         {
             WorkspacePath = "",
             Provider = "openai",
-            Model = "gpt-5-mini"
+            Model = "gpt-5.4-mini"
         };
 
         var act = () => factory.Create(request);
@@ -67,7 +67,7 @@ public class SessionRuntimeFactoryTests
 
             var session = factory.Create(request);
 
-            session.Info.Model.Should().Be("gpt-5-mini");
+            session.Info.Model.Should().Be("gpt-5.4-mini");
             await session.Logger.DisposeAsync();
         }
         finally
@@ -94,7 +94,7 @@ public class SessionRuntimeFactoryTests
             {
                 WorkspacePath = workspace,
                 Provider = "openai",
-                Model = "gpt-5-mini"
+                Model = "gpt-5.4-mini"
             };
 
             var session = factory.CreateResume("resume-1", request, messages);

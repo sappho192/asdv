@@ -5,7 +5,7 @@ This doc shows a minimal curl-based flow to create a session, stream events, sen
 ## 0) Node.js Interactive Client
 Requires Node.js 18+.
 ```bash
-node scripts/server-client.mjs --base http://localhost:5000 --workspace C:\\REPO\\asdv --provider openai --model gpt-5-mini
+node scripts/server-client.mjs --base http://localhost:5000 --workspace C:\\REPO\\asdv --provider openai --model gpt-5.4-mini
 ```
 
 OpenAI-compatible example (reads `asdv.yaml` from workspace if you omit model):
@@ -15,14 +15,14 @@ node scripts/server-client.mjs --base http://localhost:5000 --workspace C:\\REPO
 
 Resume an existing session:
 ```bash
-node scripts/server-client.mjs --base http://localhost:5000 --workspace C:\\REPO\\asdv --provider openai --model gpt-5-mini --session <id>
+node scripts/server-client.mjs --base http://localhost:5000 --workspace C:\\REPO\\asdv --provider openai --model gpt-5.4-mini --session <id>
 ```
 
 ## 1) Create Session
 ```bash
 curl -s -X POST http://localhost:5000/api/sessions \
   -H "Content-Type: application/json" \
-  -d "{\"workspacePath\":\"C:\\\\REPO\\\\asdv\",\"provider\":\"openai\",\"model\":\"gpt-5-mini\"}"
+  -d "{\"workspacePath\":\"C:\\\\REPO\\\\asdv\",\"provider\":\"openai\",\"model\":\"gpt-5.4-mini\"}"
 ```
 
 Response:
@@ -60,5 +60,5 @@ curl -s -X POST http://localhost:5000/api/sessions/<id>/approvals/<callId> \
 ```bash
 curl -s -X POST http://localhost:5000/api/sessions/<id>/resume \
   -H "Content-Type: application/json" \
-  -d "{\"workspacePath\":\"C:\\\\REPO\\\\asdv\",\"provider\":\"openai\",\"model\":\"gpt-5-mini\"}"
+  -d "{\"workspacePath\":\"C:\\\\REPO\\\\asdv\",\"provider\":\"openai\",\"model\":\"gpt-5.4-mini\"}"
 ```

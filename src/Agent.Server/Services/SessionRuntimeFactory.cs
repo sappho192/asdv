@@ -155,7 +155,7 @@ public sealed class SessionRuntimeFactory
         return provider switch
         {
             "anthropic" => "claude-sonnet-4-20250514",
-            "openai" => "gpt-5-mini",
+            "openai" => "gpt-5.4-mini",
             "openai-compatible" => throw new ArgumentException(
                 "Model is required for openai-compatible provider. Provide Model in the request or asdv.yaml."),
             _ => throw new ArgumentException($"Unknown provider: {provider}")

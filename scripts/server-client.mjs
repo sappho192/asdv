@@ -9,7 +9,7 @@ function getArg(name, fallback) {
 const baseUrl = getArg("--base", "http://localhost:5000");
 const workspacePath = getArg("--workspace", process.cwd());
 const provider = getArg("--provider", "openai");
-const model = getArg("--model", "gpt-5-mini");
+const model = getArg("--model", "gpt-5.4-mini");
 const resumeId = getArg("--session", "");
 
 async function postJson(url, body) {

@@ -511,7 +511,7 @@ static string ResolveModel(string provider, string? model, AppConfig? appConfig)
     return provider switch
     {
         "anthropic" => "claude-sonnet-4-20250514",
-        "openai" => "gpt-5-mini",
+        "openai" => "gpt-5.4-mini",
         "openai-compatible" => throw new ArgumentException(
             "Model is required for openai-compatible provider. Set --model or model in asdv.yaml."),
         _ => throw new ArgumentException(

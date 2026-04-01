@@ -396,7 +396,7 @@ POST /api/sessions/{id}/resume
 {
   "workspacePath": "/path/to/repo",
   "provider": "openai",
-  "model": "gpt-5-mini"
+  "model": "gpt-5.4-mini"
 }
 ```
 

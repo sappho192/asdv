@@ -151,7 +151,7 @@ This eliminates code duplication and ensures both surfaces behave identically.
 ### Default Models
 
 - **Anthropic**: `claude-sonnet-4-20250514`
-- **OpenAI**: `gpt-5-mini`
+- **OpenAI**: `gpt-5.4-mini`
 
 ### Project-Level Prompt (`.asdv/prompt.md`)
 
