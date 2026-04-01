@@ -11,7 +11,7 @@ public enum ResumeMode
     LastN
 }
 
-internal static class SessionLogReader
+public static class SessionLogReader
 {
     private static readonly JsonSerializerOptions SerializerOptions = new()
     {
