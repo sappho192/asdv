@@ -59,6 +59,13 @@ public sealed class ConsoleEventRenderer
                 // Already handled by AgentError/MaxIterationsReached — skip duplicate output
                 break;
 
+            case ToolProgressEvent progress:
+                Console.ForegroundColor = ConsoleColor.DarkGray;
+                var pctStr = progress.PercentComplete.HasValue ? $" ({progress.PercentComplete:F0}%)" : "";
+                Console.WriteLine($"  [{progress.ToolName}] {progress.Message}{pctStr}");
+                Console.ResetColor();
+                break;
+
             case AgentCompleted:
                 Console.ForegroundColor = ConsoleColor.Green;
                 Console.WriteLine("[Agent completed]");

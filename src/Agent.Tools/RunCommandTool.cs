@@ -9,7 +9,7 @@ public class RunCommandTool : ITool
 {
     public string Name => "RunCommand";
     public string Description => "Execute a command in the repository directory";
-    public ToolPolicy Policy => new() { RequiresApproval = true, Risk = RiskLevel.High };
+    public ToolPolicy Policy => new() { RequiresApproval = true, Risk = RiskLevel.High, ProducesProgress = true, IsExternalSideEffect = true };
 
     public string InputSchema => """
     {

@@ -9,4 +9,5 @@ public record ToolContext
     public required IWorkspace Workspace { get; init; }
     public required IApprovalService ApprovalService { get; init; }
     public Dictionary<string, string>? SessionNotes { get; init; }
+    public IProgress<ToolProgressInfo>? Progress { get; init; }
 }

@@ -5,17 +5,28 @@ namespace Agent.Core.Policy;
 
 public class DefaultPolicyEngine : IPolicyEngine
 {
-    private readonly PolicyOptions _options;
+    private PolicyOptions _options;
 
     public DefaultPolicyEngine(PolicyOptions options)
     {
         _options = options;
     }
 
+    public bool AutoApprove => _options.AutoApprove;
+
+    public void SetAutoApprove(bool value)
+    {
+        _options = _options with { AutoApprove = value };
+    }
+
     public Task<PolicyDecision> EvaluateAsync(ITool tool, string argsJson)
     {
         if (_options.AutoApprove)
         {
+            // High-risk tools always require approval, even with auto-approve
+            if (tool.Policy.Risk == RiskLevel.High)
+                return Task.FromResult(PolicyDecision.RequiresApproval);
+
             return Task.FromResult(PolicyDecision.Allowed);
         }
 

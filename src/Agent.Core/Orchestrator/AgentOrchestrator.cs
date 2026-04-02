@@ -173,12 +173,63 @@ public class AgentOrchestrator
                 yield break;
             }
 
-            // Execute tool calls
-            foreach (var toolCall in pendingToolCalls)
+            // Partition tool calls into parallel-safe and sequential groups
+            var parallelBatch = new List<ToolCallReady>();
+            var sequentialQueue = new List<ToolCallReady>();
+
+            foreach (var tc in pendingToolCalls)
+            {
+                var t = _toolRegistry.GetTool(tc.ToolName);
+                if (t != null && t.Policy.IsReadOnly && t.Policy.IsConcurrencySafe)
+                    parallelBatch.Add(tc);
+                else
+                    sequentialQueue.Add(tc);
+            }
+
+            // If only one parallel tool, just run it sequentially
+            if (parallelBatch.Count == 1)
+            {
+                sequentialQueue.Insert(0, parallelBatch[0]);
+                parallelBatch.Clear();
+            }
+
+            // Execute parallel batch via Task.WhenAll
+            if (parallelBatch.Count > 1)
+            {
+                foreach (var tc in parallelBatch)
+                    yield return new ToolExecutionStarted(tc.CallId, tc.ToolName, tc.ArgsJson);
+
+                var tasks = parallelBatch.Select(tc => ExecuteToolCallWithEventsAsync(tc, ct)).ToArray();
+                var results = await Task.WhenAll(tasks);
+
+                // Add results to messages in ORIGINAL order + yield progress/completion
+                for (int i = 0; i < parallelBatch.Count; i++)
+                {
+                    var tc = parallelBatch[i];
+                    var execResult = results[i];
+
+                    // Yield buffered progress events
+                    foreach (var pe in execResult.ProgressEvents)
+                        yield return pe;
+
+                    var toolMessage = new ToolResultMessage(tc.CallId, tc.ToolName, execResult.Result);
+                    messages.Add(toolMessage);
+                    await LogMessageAsync(toolMessage);
+
+                    yield return new ToolExecutionCompleted(tc.CallId, tc.ToolName, execResult.Result);
+                }
+            }
+
+            // Execute sequential tools one by one
+            foreach (var toolCall in sequentialQueue)
             {
                 yield return new ToolExecutionStarted(toolCall.CallId, toolCall.ToolName, toolCall.ArgsJson);
 
                 var result = await ExecuteToolCallWithEventsAsync(toolCall, ct);
+
+                // Yield buffered progress events
+                foreach (var pe in result.ProgressEvents)
+                    yield return pe;
 
                 var toolMessage = new ToolResultMessage(toolCall.CallId, toolCall.ToolName, result.Result);
                 messages.Add(toolMessage);
@@ -230,15 +281,26 @@ public class AgentOrchestrator
         try
         {
             var args = JsonDocument.Parse(toolCall.ArgsJson).RootElement;
+
+            // Buffer progress events during tool execution
+            var progressBuffer = new List<ToolProgressEvent>();
+            var progress = new Progress<ToolProgressInfo>(info =>
+            {
+                progressBuffer.Add(new ToolProgressEvent(
+                    info.CallId, toolCall.ToolName, info.Message, info.PercentComplete));
+            });
+
             var context = new ToolContext
             {
                 RepoRoot = _options.RepoRoot,
                 Workspace = _options.Workspace,
                 ApprovalService = _approvalService,
-                SessionNotes = _options.State?.Notes
+                SessionNotes = _options.State?.Notes,
+                Progress = progress
             };
 
             executionResult.Result = await tool.ExecuteAsync(args, context, ct);
+            executionResult.ProgressEvents = progressBuffer;
 
             var st = _options.State;
             if (st != null)
@@ -382,5 +444,6 @@ public class AgentOrchestrator
         public bool ApprovalRequested { get; set; }
         public bool ApprovalResolved { get; set; }
         public bool ApprovalGranted { get; set; }
+        public List<ToolProgressEvent> ProgressEvents { get; set; } = new();
     }
 }

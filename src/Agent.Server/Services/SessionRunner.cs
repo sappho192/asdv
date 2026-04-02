@@ -52,6 +52,7 @@ public sealed class SessionRunner
         CoreEvents.SessionStarted s => new SessionStartedEvent(s.SessionId, s.Provider, s.Model, s.Resumed),
         CoreEvents.SessionCompleted sc => new SessionCompletedEvent(sc.SessionId, sc.Reason, sc.TotalIterations),
         CoreEvents.SessionError se => new SessionErrorEvent(se.SessionId, se.Message),
+        CoreEvents.ToolProgressEvent tp => new ToolProgressServerEvent(tp.CallId, tp.ToolName, tp.Message, tp.PercentComplete),
         _ => null
     };
 }

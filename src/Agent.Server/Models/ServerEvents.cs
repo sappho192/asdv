@@ -32,3 +32,6 @@ public sealed record SessionErrorEvent(string SessionId, string Message)
 
 public sealed record TokenBudgetEvent(long EstimatedInput, long EstimatedOutput, int? MaxContext)
     : ServerEvent("token_budget");
+
+public sealed record ToolProgressServerEvent(string CallId, string Tool, string Message, double? PercentComplete)
+    : ServerEvent("tool_progress");

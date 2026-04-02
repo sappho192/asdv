@@ -9,7 +9,7 @@ public class ListFilesTool : ITool
 {
     public string Name => "ListFiles";
     public string Description => "List files in a directory matching a glob pattern";
-    public ToolPolicy Policy => new() { IsReadOnly = true };
+    public ToolPolicy Policy => new() { IsReadOnly = true, IsConcurrencySafe = true };
 
     public string InputSchema => """
     {

@@ -370,6 +370,9 @@ static async Task RunAgentAsync(
 
         // Set up command system
         var commandRegistry = new CommandRegistry();
+        // Track mutable model name for /model command
+        var currentModel = resolvedModel;
+
         var commandContext = new CommandContext
         {
             ProviderName = resolvedProvider,
@@ -378,11 +381,20 @@ static async Task RunAgentAsync(
             SessionPath = sessionPath,
             RepoRoot = repoRoot,
             AutoApprove = autoApprove,
-            State = sessionState
+            State = sessionState,
+            OnModelChanged = newModel => { currentModel = newModel; },
+            OnApproveAllToggled = () =>
+            {
+                var newState = !policyEngine.AutoApprove;
+                policyEngine.SetAutoApprove(newState);
+                return newState;
+            }
         };
         commandRegistry.Register(new StatusCommand());
         commandRegistry.Register(new DiffCommand());
         commandRegistry.Register(new NotesCommand());
+        commandRegistry.Register(new ModelCommand());
+        commandRegistry.Register(new ApproveAllCommand());
         // HelpCommand needs registry reference — register last
         commandRegistry.Register(new HelpCommand(commandRegistry));
 
@@ -442,6 +454,14 @@ static async Task RunAgentAsync(
                     Console.ResetColor();
                 }
                 continue;
+            }
+
+            // Rebuild orchestrator if model changed via /model command
+            if (currentModel != options.Model)
+            {
+                options = options with { Model = currentModel, SystemPrompt = GetSystemPrompt(toolRegistry, repoRoot) };
+                orchestrator = new AgentOrchestrator(
+                    modelProvider, toolRegistry, approvalService, policyEngine, logger, options);
             }
 
             await RunStreamToConsoleAsync(orchestrator, renderer, input, messages, ct);

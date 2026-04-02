@@ -54,3 +54,7 @@ public sealed record SessionStarted(string SessionId, string Provider, string Mo
 public sealed record SessionCompleted(string SessionId, string Reason, int TotalIterations) : AgentEvent;
 
 public sealed record SessionError(string SessionId, string Message) : AgentEvent;
+
+// Tool progress events
+
+public sealed record ToolProgressEvent(string CallId, string ToolName, string Message, double? PercentComplete) : AgentEvent;

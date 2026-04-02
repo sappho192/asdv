@@ -18,4 +18,6 @@ public record CommandContext
     public required string RepoRoot { get; init; }
     public required bool AutoApprove { get; init; }
     public SessionState? State { get; init; }
+    public Action<string>? OnModelChanged { get; init; }
+    public Func<bool>? OnApproveAllToggled { get; init; }
 }
