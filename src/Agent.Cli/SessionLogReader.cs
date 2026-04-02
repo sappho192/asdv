@@ -78,19 +78,24 @@ public static class SessionLogReader
                 // Parse work notes
                 if (string.Equals(type, "work_note", StringComparison.OrdinalIgnoreCase))
                 {
-                    if (dataElement.TryGetProperty("key", out var keyEl)
-                        && dataElement.TryGetProperty("value", out var valEl))
+                    if (dataElement.TryGetProperty("key", out var keyEl))
                     {
                         var key = keyEl.GetString();
-                        var value = valEl.GetString();
                         if (!string.IsNullOrEmpty(key))
                         {
-                            if (value == null)
-                                notes.Remove(key);
+                            if (dataElement.TryGetProperty("value", out var valEl)
+                                && valEl.ValueKind != JsonValueKind.Null)
+                                notes[key] = valEl.GetString() ?? "";
                             else
-                                notes[key] = value;
+                                notes.Remove(key); // tombstone
                         }
                     }
+                    continue;
+                }
+
+                if (string.Equals(type, "work_note_clear_all", StringComparison.OrdinalIgnoreCase))
+                {
+                    notes.Clear();
                     continue;
                 }
 

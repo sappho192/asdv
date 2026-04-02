@@ -260,9 +260,27 @@ public class AgentOrchestrator
             if (string.Equals(toolCall.ToolName, "WorkNotes", StringComparison.OrdinalIgnoreCase)
                 && executionResult.Result.Ok && st?.Notes != null)
             {
-                foreach (var kv in st.Notes)
+                var action = args.TryGetProperty("action", out var actionProp)
+                    ? actionProp.GetString()?.ToLowerInvariant() : null;
+                var noteKey = args.TryGetProperty("key", out var keyProp)
+                    ? keyProp.GetString() : null;
+
+                if (action == "set" && noteKey != null && st.Notes.TryGetValue(noteKey, out var noteVal))
                 {
-                    await _logger.LogAsync(new { type = "work_note", key = kv.Key, value = kv.Value });
+                    await _logger.LogAsync(new { type = "work_note", key = noteKey, value = noteVal });
+                }
+                else if (action == "clear")
+                {
+                    if (!string.IsNullOrEmpty(noteKey))
+                    {
+                        // Single key cleared — tombstone
+                        await _logger.LogAsync(new { type = "work_note", key = noteKey, value = (string?)null });
+                    }
+                    else
+                    {
+                        // All keys cleared — tombstone for each previously known key
+                        await _logger.LogAsync(new { type = "work_note_clear_all" });
+                    }
                 }
             }
 
@@ -277,10 +295,20 @@ public class AgentOrchestrator
 
     private ModelRequest BuildRequest(List<ChatMessage> messages)
     {
+        var prompt = _options.SystemPrompt ?? "";
+
+        // Inject current work notes into system prompt each turn
+        var notes = _options.State?.Notes;
+        if (notes != null && notes.Count > 0)
+        {
+            var notesText = string.Join("\n", notes.Select(kv => $"  {kv.Key}: {kv.Value}"));
+            prompt += $"\n\n## Current Work Notes\n\n{notesText}\n\nThese notes persist across turns. Use the WorkNotes tool to update them as you make progress.";
+        }
+
         return new ModelRequest
         {
             Model = _options.Model,
-            SystemPrompt = _options.SystemPrompt,
+            SystemPrompt = prompt,
             Messages = messages,
             Tools = _toolRegistry.GetToolDefinitions(),
             MaxTokens = _options.MaxTokens,

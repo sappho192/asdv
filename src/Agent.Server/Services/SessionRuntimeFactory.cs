@@ -207,6 +207,7 @@ public sealed class SessionRuntimeFactory
         registry.Register(new FileEditTool());
         registry.Register(new ApplyPatchTool());
         registry.Register(new RunCommandTool());
+        registry.Register(new WorkNotesTool());
 
         return registry;
     }

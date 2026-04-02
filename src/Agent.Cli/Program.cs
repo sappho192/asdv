@@ -306,7 +306,7 @@ static async Task RunAgentAsync(
         Workspace = workspace,
         MaxIterations = maxIterations,
         MaxTokens = 4096,
-        SystemPrompt = GetSystemPrompt(toolRegistry, repoRoot, sessionState.Notes),
+        SystemPrompt = GetSystemPrompt(toolRegistry, repoRoot),
         State = sessionState,
         IsResumed = resumed
     };
@@ -621,7 +621,7 @@ static ToolRegistry CreateToolRegistry()
     return registry;
 }
 
-static string GetSystemPrompt(ToolRegistry toolRegistry, string repoRoot, Dictionary<string, string>? notes = null)
+static string GetSystemPrompt(ToolRegistry toolRegistry, string repoRoot)
 {
     var toolDescriptions = toolRegistry.GetToolDescriptionsMarkdown();
 
@@ -630,21 +630,6 @@ static string GetSystemPrompt(ToolRegistry toolRegistry, string repoRoot, Dictio
     var projectPrompt = File.Exists(projectPromptPath)
         ? Environment.NewLine + File.ReadAllText(projectPromptPath)
         : "";
-
-    // Build work notes section
-    var notesSection = "";
-    if (notes != null && notes.Count > 0)
-    {
-        var notesText = string.Join(Environment.NewLine, notes.Select(kv => $"  {kv.Key}: {kv.Value}"));
-        notesSection = $"""
-
-        ## Current Work Notes
-
-        {notesText}
-
-        These notes persist across turns. Use the WorkNotes tool to update them as you make progress.
-        """;
-    }
 
     return $"""
         You are a coding assistant that helps developers with tasks in their local repository.
@@ -677,7 +662,7 @@ static string GetSystemPrompt(ToolRegistry toolRegistry, string repoRoot, Dictio
         ```
 
         Keep changes minimal and focused on the specific task.
-        {projectPrompt}{notesSection}
+        {projectPrompt}
         """;
 }
 
