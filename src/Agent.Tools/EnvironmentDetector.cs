@@ -20,7 +20,8 @@ public static class EnvironmentDetector
 
     public static EnvironmentInfo Detect(string repoRoot)
     {
-        var isGitRepo = Directory.Exists(Path.Combine(repoRoot, ".git"));
+        var gitPath = Path.Combine(repoRoot, ".git");
+        var isGitRepo = Directory.Exists(gitPath) || File.Exists(gitPath);
         var (hasNode, nodeVersion) = TryGetVersion("node", "--version");
         var (hasPython, pythonVersion) = TryGetVersion("python3", "--version")
             is { Item1: true } result ? result : TryGetVersion("python", "--version");

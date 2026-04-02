@@ -72,6 +72,10 @@ public sealed class SessionRuntimeFactory
             model,
             DateTimeOffset.UtcNow);
 
+        // Detect environment
+        var envInfo = EnvironmentDetector.Detect(repoRoot);
+        FileValidation.SetEnvironment(envInfo.HasNode, envInfo.HasPython);
+
         var workspace = new LocalWorkspace(repoRoot);
         var toolRegistry = CreateToolRegistry();
         var modelProvider = CreateProvider(provider, appConfig);
@@ -88,7 +92,7 @@ public sealed class SessionRuntimeFactory
             Workspace = workspace,
             MaxIterations = 20,
             MaxTokens = 4096,
-            SystemPrompt = SystemPromptProvider.GetSystemPrompt(toolRegistry, repoRoot),
+            SystemPrompt = SystemPromptProvider.GetSystemPrompt(toolRegistry, repoRoot, envInfo),
             IsResumed = isResumed
         };
 

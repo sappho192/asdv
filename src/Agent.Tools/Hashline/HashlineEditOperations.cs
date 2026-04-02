@@ -212,6 +212,7 @@ public static class HashlineEditOperations
 
     public static string? DetectOverlappingRanges(HashlineEdit[] edits)
     {
+        // Collect all range replacements
         var ranges = new List<(int Start, int End, int Idx)>();
         for (int i = 0; i < edits.Length; i++)
         {
@@ -221,19 +222,50 @@ public static class HashlineEditOperations
             ranges.Add((start, end, i));
         }
 
-        if (ranges.Count < 2) return null;
-
-        ranges.Sort((a, b) => a.Start != b.Start ? a.Start.CompareTo(b.Start) : a.End.CompareTo(b.End));
-        for (int i = 1; i < ranges.Count; i++)
+        // Check range-vs-range overlaps
+        if (ranges.Count >= 2)
         {
-            if (ranges[i].Start <= ranges[i - 1].End)
+            ranges.Sort((a, b) => a.Start != b.Start ? a.Start.CompareTo(b.Start) : a.End.CompareTo(b.End));
+            for (int i = 1; i < ranges.Count; i++)
             {
-                return $"Overlapping range edits detected: " +
-                    $"edit {ranges[i - 1].Idx + 1} (lines {ranges[i - 1].Start}-{ranges[i - 1].End}) overlaps with " +
-                    $"edit {ranges[i].Idx + 1} (lines {ranges[i].Start}-{ranges[i].End}). " +
-                    $"Use pos-only replace for single-line edits.";
+                if (ranges[i].Start <= ranges[i - 1].End)
+                {
+                    return $"Overlapping range edits detected: " +
+                        $"edit {ranges[i - 1].Idx + 1} (lines {ranges[i - 1].Start}-{ranges[i - 1].End}) overlaps with " +
+                        $"edit {ranges[i].Idx + 1} (lines {ranges[i].Start}-{ranges[i].End}). " +
+                        $"Use pos-only replace for single-line edits.";
+                }
             }
         }
+
+        // Check that non-range edits (single replace, append, prepend) don't target lines inside a range
+        if (ranges.Count > 0)
+        {
+            for (int i = 0; i < edits.Length; i++)
+            {
+                int? targetLine = edits[i] switch
+                {
+                    HashlineEdit.Replace { End: null } r => HashlineValidation.ParseLineRef(r.Pos).Line,
+                    HashlineEdit.Append { Pos: not null } a => HashlineValidation.ParseLineRef(a.Pos).Line,
+                    HashlineEdit.Prepend { Pos: not null } p => HashlineValidation.ParseLineRef(p.Pos).Line,
+                    _ => null
+                };
+
+                if (targetLine == null) continue;
+
+                foreach (var range in ranges)
+                {
+                    if (range.Idx == i) continue; // skip self
+                    if (targetLine >= range.Start && targetLine <= range.End)
+                    {
+                        return $"Edit {i + 1} targets line {targetLine} which falls inside range edit {range.Idx + 1} " +
+                            $"(lines {range.Start}-{range.End}). " +
+                            $"Combine these into a single range replacement, or edit outside the range.";
+                    }
+                }
+            }
+        }
+
         return null;
     }
 
