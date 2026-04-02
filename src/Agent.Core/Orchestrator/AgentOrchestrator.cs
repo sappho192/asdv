@@ -173,69 +173,82 @@ public class AgentOrchestrator
                 yield break;
             }
 
-            // Partition tool calls into parallel-safe and sequential groups
-            var parallelBatch = new List<ToolCallReady>();
-            var sequentialQueue = new List<ToolCallReady>();
-
-            foreach (var tc in pendingToolCalls)
+            // Execute tool calls preserving original order.
+            // Consecutive parallel-safe (read-only + concurrency-safe) tools are batched
+            // and executed via Task.WhenAll. Non-parallel tools act as barriers.
+            int idx = 0;
+            while (idx < pendingToolCalls.Count)
             {
-                var t = _toolRegistry.GetTool(tc.ToolName);
-                if (t != null && t.Policy.IsReadOnly && t.Policy.IsConcurrencySafe)
-                    parallelBatch.Add(tc);
-                else
-                    sequentialQueue.Add(tc);
-            }
-
-            // If only one parallel tool, just run it sequentially
-            if (parallelBatch.Count == 1)
-            {
-                sequentialQueue.Insert(0, parallelBatch[0]);
-                parallelBatch.Clear();
-            }
-
-            // Execute parallel batch via Task.WhenAll
-            if (parallelBatch.Count > 1)
-            {
-                foreach (var tc in parallelBatch)
-                    yield return new ToolExecutionStarted(tc.CallId, tc.ToolName, tc.ArgsJson);
-
-                var tasks = parallelBatch.Select(tc => ExecuteToolCallWithEventsAsync(tc, ct)).ToArray();
-                var results = await Task.WhenAll(tasks);
-
-                // Add results to messages in ORIGINAL order + yield progress/completion
-                for (int i = 0; i < parallelBatch.Count; i++)
+                // Collect a consecutive run of parallel-safe tools
+                var runStart = idx;
+                while (idx < pendingToolCalls.Count)
                 {
-                    var tc = parallelBatch[i];
-                    var execResult = results[i];
+                    var t = _toolRegistry.GetTool(pendingToolCalls[idx].ToolName);
+                    if (t != null && t.Policy.IsReadOnly && t.Policy.IsConcurrencySafe)
+                        idx++;
+                    else
+                        break;
+                }
 
-                    // Yield buffered progress events
-                    foreach (var pe in execResult.ProgressEvents)
+                var parallelRun = pendingToolCalls.GetRange(runStart, idx - runStart);
+
+                // Execute parallel run (if 2+, otherwise fall through to sequential)
+                if (parallelRun.Count > 1)
+                {
+                    foreach (var tc in parallelRun)
+                        yield return new ToolExecutionStarted(tc.CallId, tc.ToolName, tc.ArgsJson);
+
+                    var tasks = parallelRun.Select(tc => ExecuteToolCallWithEventsAsync(tc, ct)).ToArray();
+                    var results = await Task.WhenAll(tasks);
+
+                    // Merge results in original order — state updates deferred to here (single thread)
+                    for (int i = 0; i < parallelRun.Count; i++)
+                    {
+                        var tc = parallelRun[i];
+                        var execResult = results[i];
+
+                        ApplyToolExecutionState(state, tc, execResult);
+
+                        foreach (var pe in execResult.ProgressEvents)
+                            yield return pe;
+
+                        var toolMessage = new ToolResultMessage(tc.CallId, tc.ToolName, execResult.Result);
+                        messages.Add(toolMessage);
+                        await LogMessageAsync(toolMessage);
+
+                        yield return new ToolExecutionCompleted(tc.CallId, tc.ToolName, execResult.Result);
+                    }
+                    continue;
+                }
+
+                // Single parallel-safe tool or non-parallel tool — execute sequentially
+                // (also covers the barrier tool that stopped the parallel run)
+                var remaining = parallelRun.Count > 0 ? parallelRun : new List<ToolCallReady>();
+
+                // If we stopped at a non-parallel tool, include it
+                if (idx < pendingToolCalls.Count)
+                {
+                    remaining.Add(pendingToolCalls[idx]);
+                    idx++;
+                }
+
+                foreach (var toolCall in remaining)
+                {
+                    yield return new ToolExecutionStarted(toolCall.CallId, toolCall.ToolName, toolCall.ArgsJson);
+
+                    var result = await ExecuteToolCallWithEventsAsync(toolCall, ct);
+
+                    ApplyToolExecutionState(state, toolCall, result);
+
+                    foreach (var pe in result.ProgressEvents)
                         yield return pe;
 
-                    var toolMessage = new ToolResultMessage(tc.CallId, tc.ToolName, execResult.Result);
+                    var toolMessage = new ToolResultMessage(toolCall.CallId, toolCall.ToolName, result.Result);
                     messages.Add(toolMessage);
                     await LogMessageAsync(toolMessage);
 
-                    yield return new ToolExecutionCompleted(tc.CallId, tc.ToolName, execResult.Result);
+                    yield return new ToolExecutionCompleted(toolCall.CallId, toolCall.ToolName, result.Result);
                 }
-            }
-
-            // Execute sequential tools one by one
-            foreach (var toolCall in sequentialQueue)
-            {
-                yield return new ToolExecutionStarted(toolCall.CallId, toolCall.ToolName, toolCall.ArgsJson);
-
-                var result = await ExecuteToolCallWithEventsAsync(toolCall, ct);
-
-                // Yield buffered progress events
-                foreach (var pe in result.ProgressEvents)
-                    yield return pe;
-
-                var toolMessage = new ToolResultMessage(toolCall.CallId, toolCall.ToolName, result.Result);
-                messages.Add(toolMessage);
-                await LogMessageAsync(toolMessage);
-
-                yield return new ToolExecutionCompleted(toolCall.CallId, toolCall.ToolName, result.Result);
             }
         }
 
@@ -296,18 +309,15 @@ public class AgentOrchestrator
                 Workspace = _options.Workspace,
                 ApprovalService = _approvalService,
                 SessionNotes = _options.State?.Notes,
-                Progress = progress
+                Progress = progress,
+                CallId = toolCall.CallId
             };
 
             executionResult.Result = await tool.ExecuteAsync(args, context, ct);
             executionResult.ProgressEvents = progressBuffer;
 
-            var st = _options.State;
-            if (st != null)
-            {
-                st.LastToolName = toolCall.ToolName;
-                TrackFilesTouched(st, toolCall.ToolName, args);
-            }
+            // Collect file paths touched — state update is deferred to caller
+            CollectFilesTouched(executionResult, toolCall.ToolName, args);
 
             await _logger.LogAsync(new
             {
@@ -320,14 +330,14 @@ public class AgentOrchestrator
 
             // Log work notes for resume persistence
             if (string.Equals(toolCall.ToolName, "WorkNotes", StringComparison.OrdinalIgnoreCase)
-                && executionResult.Result.Ok && st?.Notes != null)
+                && executionResult.Result.Ok && _options.State?.Notes != null)
             {
                 var action = args.TryGetProperty("action", out var actionProp)
                     ? actionProp.GetString()?.ToLowerInvariant() : null;
                 var noteKey = args.TryGetProperty("key", out var keyProp)
                     ? keyProp.GetString() : null;
 
-                if (action == "set" && noteKey != null && st.Notes.TryGetValue(noteKey, out var noteVal))
+                if (action == "set" && noteKey != null && _options.State.Notes.TryGetValue(noteKey, out var noteVal))
                 {
                     await _logger.LogAsync(new { type = "work_note", key = noteKey, value = noteVal });
                 }
@@ -417,25 +427,39 @@ public class AgentOrchestrator
         };
     }
 
-    private static void TrackFilesTouched(SessionState state, string toolName, JsonElement args)
+    private static void CollectFilesTouched(ToolExecutionResult result, string toolName, JsonElement args)
     {
-        string? path = null;
         try
         {
             if (args.TryGetProperty("path", out var pathProp))
-                path = pathProp.GetString();
+            {
+                var path = pathProp.GetString();
+                if (!string.IsNullOrEmpty(path))
+                    result.FilesTouched.Add(path);
+            }
             else if (args.TryGetProperty("filePath", out var filePathProp))
-                path = filePathProp.GetString();
+            {
+                var path = filePathProp.GetString();
+                if (!string.IsNullOrEmpty(path))
+                    result.FilesTouched.Add(path);
+            }
         }
         catch
         {
             // Ignore JSON access errors
         }
+    }
 
-        if (!string.IsNullOrEmpty(path))
-        {
-            state.RecentFilesTouched.Add(path);
-        }
+    /// <summary>
+    /// Apply tool execution side-effects to session state. Must be called from a single thread.
+    /// </summary>
+    private static void ApplyToolExecutionState(SessionState? state, ToolCallReady toolCall, ToolExecutionResult result)
+    {
+        if (state == null) return;
+
+        state.LastToolName = toolCall.ToolName;
+        foreach (var file in result.FilesTouched)
+            state.RecentFilesTouched.Add(file);
     }
 
     private sealed class ToolExecutionResult
@@ -445,5 +469,6 @@ public class AgentOrchestrator
         public bool ApprovalResolved { get; set; }
         public bool ApprovalGranted { get; set; }
         public List<ToolProgressEvent> ProgressEvents { get; set; } = new();
+        public List<string> FilesTouched { get; set; } = new();
     }
 }

@@ -20,4 +20,7 @@ public record CommandContext
     public SessionState? State { get; init; }
     public Action<string>? OnModelChanged { get; init; }
     public Func<bool>? OnApproveAllToggled { get; init; }
+    public Func<bool>? GetAutoApproveState { get; init; }
+
+    public bool GetLiveAutoApprove() => GetAutoApproveState?.Invoke() ?? AutoApprove;
 }

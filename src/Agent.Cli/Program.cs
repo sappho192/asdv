@@ -382,13 +382,29 @@ static async Task RunAgentAsync(
             RepoRoot = repoRoot,
             AutoApprove = autoApprove,
             State = sessionState,
-            OnModelChanged = newModel => { currentModel = newModel; },
+            OnModelChanged = newModel =>
+            {
+                currentModel = newModel;
+                // Refresh capabilities for new model
+                switch (modelProvider)
+                {
+                    case Agent.Llm.OpenAI.OpenAIProvider openai:
+                        openai.SetModelCapabilities(newModel);
+                        break;
+                    case Agent.Llm.Anthropic.ClaudeProvider claude:
+                        claude.SetModelCapabilities(newModel);
+                        break;
+                }
+                sessionState.MaxContextTokens = appConfig?.MaxContextTokens
+                    ?? modelProvider.Capabilities?.MaxContextTokens;
+            },
             OnApproveAllToggled = () =>
             {
                 var newState = !policyEngine.AutoApprove;
                 policyEngine.SetAutoApprove(newState);
                 return newState;
-            }
+            },
+            GetAutoApproveState = () => policyEngine.AutoApprove
         };
         commandRegistry.Register(new StatusCommand());
         commandRegistry.Register(new DiffCommand());

@@ -10,12 +10,12 @@ public class StatusCommand : ICommand
         Console.ForegroundColor = ConsoleColor.Cyan;
         Console.WriteLine("Session Status");
         Console.ResetColor();
-        Console.WriteLine($"  Provider:     {context.ProviderName}");
-        Console.WriteLine($"  Model:        {context.ModelName}");
+        Console.WriteLine($"  Provider:     {context.State?.ProviderName ?? context.ProviderName}");
+        Console.WriteLine($"  Model:        {context.State?.ModelName ?? context.ModelName}");
         Console.WriteLine($"  Session ID:   {context.SessionId}");
         Console.WriteLine($"  Session path: {context.SessionPath}");
         Console.WriteLine($"  Repository:   {context.RepoRoot}");
-        Console.WriteLine($"  Auto-approve: {context.AutoApprove}");
+        Console.WriteLine($"  Auto-approve: {context.GetLiveAutoApprove()}");
 
         var state = context.State;
         if (state != null)

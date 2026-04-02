@@ -6,7 +6,8 @@ namespace Agent.Core.Session;
 
 public static class TokenEstimator
 {
-    private static readonly Encoder _encoder = ModelToEncoder.For("cl100k_base");
+    // Use a well-known model that uses cl100k_base encoding
+    private static readonly Encoder _encoder = ModelToEncoder.For("gpt-4");
 
     /// <summary>
     /// Estimate token count for a string using TikToken cl100k_base encoding.
