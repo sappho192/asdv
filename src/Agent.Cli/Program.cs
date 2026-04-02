@@ -9,6 +9,7 @@ using Agent.Core.Logging;
 using Agent.Core.Orchestrator;
 using Agent.Core.Policy;
 using Agent.Core.Providers;
+using Agent.Core.Session;
 using Agent.Core.Tools;
 using Agent.Llm.Anthropic;
 using Agent.Llm.OpenAI;
@@ -195,6 +196,17 @@ static async Task RunAgentAsync(
         return;
     }
 
+    // Initialize provider capabilities
+    switch (modelProvider)
+    {
+        case Agent.Llm.OpenAI.OpenAIProvider openai:
+            openai.SetModelCapabilities(resolvedModel);
+            break;
+        case Agent.Llm.Anthropic.ClaudeProvider claude:
+            claude.SetModelCapabilities(resolvedModel);
+            break;
+    }
+
     // Create workspace
     var workspace = new LocalWorkspace(repoRoot);
 
@@ -229,10 +241,11 @@ static async Task RunAgentAsync(
 
     var resumed = File.Exists(sessionPath);
     var messages = new List<Agent.Core.Messages.ChatMessage>();
+    var resumedNotes = new Dictionary<string, string>();
     if (resumed)
     {
         var (parsedResumeMode, lastN) = ParseResumeMode(resumeMode);
-        messages = SessionLogReader.LoadMessages(sessionPath, parsedResumeMode, lastN, warning =>
+        var snapshot = SessionLogReader.LoadSession(sessionPath, parsedResumeMode, lastN, warning =>
         {
             if (debug)
             {
@@ -241,6 +254,8 @@ static async Task RunAgentAsync(
                 Console.ResetColor();
             }
         });
+        messages = snapshot.Messages;
+        resumedNotes = snapshot.Notes;
 
         if (parsedResumeMode != ResumeMode.Full)
         {
@@ -264,6 +279,25 @@ static async Task RunAgentAsync(
         sessionPath = "(none)";
     }
 
+    // Create session state
+    var maxContextTokens = appConfig?.MaxContextTokens
+        ?? modelProvider.Capabilities?.MaxContextTokens;
+
+    var sessionState = new SessionState
+    {
+        SessionId = sessionId,
+        ProviderName = resolvedProvider,
+        ModelName = resolvedModel,
+        MaxContextTokens = maxContextTokens,
+        StartedAt = DateTimeOffset.UtcNow
+    };
+
+    // Restore work notes from previous session
+    foreach (var (key, value) in resumedNotes)
+    {
+        sessionState.Notes[key] = value;
+    }
+
     // Create options
     var options = new AgentOptions
     {
@@ -272,7 +306,9 @@ static async Task RunAgentAsync(
         Workspace = workspace,
         MaxIterations = maxIterations,
         MaxTokens = 4096,
-        SystemPrompt = GetSystemPrompt(toolRegistry, repoRoot)
+        SystemPrompt = GetSystemPrompt(toolRegistry, repoRoot, sessionState.Notes),
+        State = sessionState,
+        IsResumed = resumed
     };
 
     // Print header
@@ -341,10 +377,12 @@ static async Task RunAgentAsync(
             SessionId = sessionId,
             SessionPath = sessionPath,
             RepoRoot = repoRoot,
-            AutoApprove = autoApprove
+            AutoApprove = autoApprove,
+            State = sessionState
         };
         commandRegistry.Register(new StatusCommand());
         commandRegistry.Register(new DiffCommand());
+        commandRegistry.Register(new NotesCommand());
         // HelpCommand needs registry reference — register last
         commandRegistry.Register(new HelpCommand(commandRegistry));
 
@@ -577,10 +615,13 @@ static ToolRegistry CreateToolRegistry()
     registry.Register(new ApplyPatchTool());
     registry.Register(new RunCommandTool());
 
+    // Agent internal tools
+    registry.Register(new WorkNotesTool());
+
     return registry;
 }
 
-static string GetSystemPrompt(ToolRegistry toolRegistry, string repoRoot)
+static string GetSystemPrompt(ToolRegistry toolRegistry, string repoRoot, Dictionary<string, string>? notes = null)
 {
     var toolDescriptions = toolRegistry.GetToolDescriptionsMarkdown();
 
@@ -589,6 +630,21 @@ static string GetSystemPrompt(ToolRegistry toolRegistry, string repoRoot)
     var projectPrompt = File.Exists(projectPromptPath)
         ? Environment.NewLine + File.ReadAllText(projectPromptPath)
         : "";
+
+    // Build work notes section
+    var notesSection = "";
+    if (notes != null && notes.Count > 0)
+    {
+        var notesText = string.Join(Environment.NewLine, notes.Select(kv => $"  {kv.Key}: {kv.Value}"));
+        notesSection = $"""
+
+        ## Current Work Notes
+
+        {notesText}
+
+        These notes persist across turns. Use the WorkNotes tool to update them as you make progress.
+        """;
+    }
 
     return $"""
         You are a coding assistant that helps developers with tasks in their local repository.
@@ -604,6 +660,7 @@ static string GetSystemPrompt(ToolRegistry toolRegistry, string repoRoot)
         4. **Verify Results**: Check git status/diff after modifications
         5. **Test Changes**: Run tests when appropriate
         6. **Explain Actions**: Briefly describe what you're doing and why
+        7. **Track Progress**: Use WorkNotes to store plans, key findings, and TODOs
 
         ## Edit Strategies
 
@@ -620,7 +677,7 @@ static string GetSystemPrompt(ToolRegistry toolRegistry, string repoRoot)
         ```
 
         Keep changes minimal and focused on the specific task.
-        {projectPrompt}
+        {projectPrompt}{notesSection}
         """;
 }
 

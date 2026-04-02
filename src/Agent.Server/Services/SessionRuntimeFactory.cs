@@ -79,6 +79,7 @@ public sealed class SessionRuntimeFactory
         var logger = CreateLogger(repoRoot, sessionId);
         var approvalService = new ServerApprovalService();
 
+        var isResumed = messages is { Count: > 0 };
         var options = new AgentOptions
         {
             RepoRoot = repoRoot,
@@ -86,7 +87,8 @@ public sealed class SessionRuntimeFactory
             Workspace = workspace,
             MaxIterations = 20,
             MaxTokens = 4096,
-            SystemPrompt = SystemPromptProvider.GetSystemPrompt(toolRegistry, repoRoot)
+            SystemPrompt = SystemPromptProvider.GetSystemPrompt(toolRegistry, repoRoot),
+            IsResumed = isResumed
         };
 
         var runtime = new SessionRuntime(

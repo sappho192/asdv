@@ -7,6 +7,8 @@ public interface IModelProvider
 {
     string Name { get; }
 
+    IProviderCapabilities? Capabilities => null;
+
     IAsyncEnumerable<AgentEvent> StreamAsync(
         ModelRequest request,
         CancellationToken ct = default

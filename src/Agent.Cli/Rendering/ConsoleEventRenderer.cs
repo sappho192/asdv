@@ -43,6 +43,22 @@ public sealed class ConsoleEventRenderer
                 PrintToolResult(completed.ToolName, completed.Result);
                 break;
 
+            case SessionStarted session:
+                Console.ForegroundColor = ConsoleColor.DarkGray;
+                Console.WriteLine($"[Session {session.SessionId} | {session.Provider}/{session.Model}{(session.Resumed ? " (resumed)" : "")}]");
+                Console.ResetColor();
+                break;
+
+            case SessionCompleted sc:
+                Console.ForegroundColor = ConsoleColor.DarkGray;
+                Console.WriteLine($"[Session completed: {sc.Reason} ({sc.TotalIterations} iterations)]");
+                Console.ResetColor();
+                break;
+
+            case SessionError se:
+                // Already handled by AgentError/MaxIterationsReached — skip duplicate output
+                break;
+
             case AgentCompleted:
                 Console.ForegroundColor = ConsoleColor.Green;
                 Console.WriteLine("[Agent completed]");

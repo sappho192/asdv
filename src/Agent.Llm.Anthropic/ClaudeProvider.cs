@@ -16,12 +16,32 @@ public class ClaudeProvider : IModelProvider
     private const string BaseUrl = "https://api.anthropic.com/v1/messages";
 
     public string Name => "anthropic";
+    public IProviderCapabilities? Capabilities { get; private set; }
+
+    private static readonly Dictionary<string, (int context, int output)> KnownModels = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["claude-sonnet-4-20250514"] = (200_000, 16_384),
+        ["claude-opus-4-20250514"] = (200_000, 32_000),
+        ["claude-haiku-4-20250514"] = (200_000, 8_192),
+        ["claude-3-5-sonnet-20241022"] = (200_000, 8_192),
+        ["claude-3-5-haiku-20241022"] = (200_000, 8_192),
+    };
 
     public ClaudeProvider(HttpClient httpClient, string apiKey)
     {
         _httpClient = httpClient;
         _apiKey = apiKey;
     }
+
+    public void SetModelCapabilities(string modelName)
+    {
+        if (KnownModels.TryGetValue(modelName, out var info))
+        {
+            Capabilities = new ClaudeCapabilities(info.context, info.output);
+        }
+    }
+
+    private sealed record ClaudeCapabilities(int? MaxContextTokens, int? MaxOutputTokens) : IProviderCapabilities;
 
     public async IAsyncEnumerable<AgentEvent> StreamAsync(
         ModelRequest request,

@@ -7,6 +7,7 @@ using Agent.Core.Logging;
 using Agent.Core.Messages;
 using Agent.Core.Policy;
 using Agent.Core.Providers;
+using Agent.Core.Session;
 using Agent.Core.Tools;
 
 namespace Agent.Core.Orchestrator;
@@ -41,6 +42,17 @@ public class AgentOrchestrator
         List<ChatMessage> messages,
         [EnumeratorCancellation] CancellationToken ct = default)
     {
+        var state = _options.State;
+
+        if (state != null)
+        {
+            yield return new SessionStarted(
+                state.SessionId,
+                _provider.Name,
+                _options.Model,
+                _options.IsResumed);
+        }
+
         var userMessage = new UserMessage(userPrompt);
         messages.Add(userMessage);
 
@@ -49,6 +61,12 @@ public class AgentOrchestrator
 
         for (int iteration = 0; iteration < _options.MaxIterations; iteration++)
         {
+            if (state != null)
+            {
+                state.IterationCount = iteration;
+                state.MessageCount = messages.Count;
+            }
+
             yield return new IterationStarted(iteration, _options.MaxIterations);
 
             var request = BuildRequest(messages);
@@ -90,6 +108,11 @@ public class AgentOrchestrator
                     case ResponseCompleted completed:
                         stopReason = completed.StopReason;
                         completedStop = IsCompletionStopReason(completed.StopReason);
+                        if (state != null && completed.Usage != null)
+                        {
+                            state.EstimatedInputTokens = completed.Usage.InputTokens;
+                            state.EstimatedOutputTokens += completed.Usage.OutputTokens;
+                        }
                         yield return evt;
                         break;
 
@@ -124,7 +147,11 @@ public class AgentOrchestrator
             // Check termination conditions
             if (pendingToolCalls.Count == 0 && completedStop)
             {
+                if (state != null)
+                    state.CompletedAt = DateTimeOffset.UtcNow;
                 yield return new AgentCompleted(stopReason ?? "end_turn");
+                if (state != null)
+                    yield return new SessionCompleted(state.SessionId, stopReason ?? "end_turn", iteration + 1);
                 yield break;
             }
 
@@ -135,6 +162,8 @@ public class AgentOrchestrator
                 if (!string.IsNullOrWhiteSpace(errorDetails))
                     msg += $". error={errorDetails}";
                 yield return new AgentError(msg);
+                if (state != null)
+                    yield return new SessionError(state.SessionId, msg);
                 yield break;
             }
 
@@ -160,6 +189,8 @@ public class AgentOrchestrator
         }
 
         yield return new MaxIterationsReached(_options.MaxIterations);
+        if (state != null)
+            yield return new SessionError(state.SessionId, $"Max iterations reached: {_options.MaxIterations}");
     }
 
     private async Task<ToolExecutionResult> ExecuteToolCallWithEventsAsync(
@@ -203,10 +234,19 @@ public class AgentOrchestrator
             {
                 RepoRoot = _options.RepoRoot,
                 Workspace = _options.Workspace,
-                ApprovalService = _approvalService
+                ApprovalService = _approvalService,
+                SessionNotes = _options.State?.Notes
             };
 
             executionResult.Result = await tool.ExecuteAsync(args, context, ct);
+
+            var st = _options.State;
+            if (st != null)
+            {
+                st.LastToolName = toolCall.ToolName;
+                TrackFilesTouched(st, toolCall.ToolName, args);
+            }
+
             await _logger.LogAsync(new
             {
                 type = "tool_result",
@@ -215,6 +255,16 @@ public class AgentOrchestrator
                 ok = executionResult.Result.Ok,
                 diagnostics = executionResult.Result.Diagnostics
             });
+
+            // Log work notes for resume persistence
+            if (string.Equals(toolCall.ToolName, "WorkNotes", StringComparison.OrdinalIgnoreCase)
+                && executionResult.Result.Ok && st?.Notes != null)
+            {
+                foreach (var kv in st.Notes)
+                {
+                    await _logger.LogAsync(new { type = "work_note", key = kv.Key, value = kv.Value });
+                }
+            }
 
             return executionResult;
         }
@@ -275,6 +325,27 @@ public class AgentOrchestrator
             }),
             _ => _logger.LogAsync(new { type = "message", role = message.Role })
         };
+    }
+
+    private static void TrackFilesTouched(SessionState state, string toolName, JsonElement args)
+    {
+        string? path = null;
+        try
+        {
+            if (args.TryGetProperty("path", out var pathProp))
+                path = pathProp.GetString();
+            else if (args.TryGetProperty("filePath", out var filePathProp))
+                path = filePathProp.GetString();
+        }
+        catch
+        {
+            // Ignore JSON access errors
+        }
+
+        if (!string.IsNullOrEmpty(path))
+        {
+            state.RecentFilesTouched.Add(path);
+        }
     }
 
     private sealed class ToolExecutionResult

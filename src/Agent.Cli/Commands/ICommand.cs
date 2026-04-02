@@ -1,3 +1,5 @@
+using Agent.Core.Session;
+
 namespace Agent.Cli.Commands;
 
 public interface ICommand
@@ -15,4 +17,5 @@ public record CommandContext
     public required string SessionPath { get; init; }
     public required string RepoRoot { get; init; }
     public required bool AutoApprove { get; init; }
+    public SessionState? State { get; init; }
 }

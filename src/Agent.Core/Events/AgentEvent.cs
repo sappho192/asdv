@@ -46,3 +46,11 @@ public sealed record AgentCompleted(string Reason) : AgentEvent;
 public sealed record AgentError(string Message) : AgentEvent;
 
 public sealed record MaxIterationsReached(int Iterations) : AgentEvent;
+
+// Session lifecycle events
+
+public sealed record SessionStarted(string SessionId, string Provider, string Model, bool Resumed) : AgentEvent;
+
+public sealed record SessionCompleted(string SessionId, string Reason, int TotalIterations) : AgentEvent;
+
+public sealed record SessionError(string SessionId, string Message) : AgentEvent;
