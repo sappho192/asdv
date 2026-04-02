@@ -1,439 +1,207 @@
-# Agent Architecture Guide
+# AGENTS.md — Working Guide for Coding Agents
 
-This document describes the agent architecture and how to extend the system.
+Practical instructions for AI agents working on this repository.
+Read this before making any changes.
 
-## Overview
+## Project overview
 
-The Local Coding Agent follows an event-driven, provider-agnostic architecture. The core loop is:
+ASDV is a .NET 8 coding agent that runs on local repositories.
+The core loop lives in `Agent.Core`; CLI and HTTP server are thin consumers.
+All agent output flows as `IAsyncEnumerable<AgentEvent>` — never break this contract.
 
-1. **Receive** user prompt
-2. **Stream** model response via `IModelProvider`
-3. **Parse** events into standard `AgentEvent` types
-4. **Execute** tool calls with policy checks
-5. **Repeat** until completion or max iterations
-
-## Core Components
-
-### AgentOrchestrator
-
-The orchestrator (`Agent.Core/Orchestrator/AgentOrchestrator.cs`) is the central coordinator:
-
-```csharp
-public class AgentOrchestrator
-{
-    public async Task RunAsync(
-        string userPrompt,
-        List<ChatMessage>? messages = null,
-        CancellationToken ct = default)
-    {
-        // 1. Initialize or resume conversation
-        // 2. Add user message to conversation
-        // 3. Loop: Stream from model -> Process events -> Execute tools
-        // 4. Log all messages to session logger
-        // 5. Exit on completion or max iterations
-    }
-}
+```
+src/
+  Agent.Cli/           # Entry point, REPL, command parsing, console rendering
+  Agent.Core/          # Orchestrator, events, policies, session, modes, workflows
+    Orchestrator/      # AgentOrchestrator — the main loop
+    Events/            # AgentEvent hierarchy
+    Session/           # SessionState, TokenEstimator, ContextCompactor
+    Modes/             # IExecutionMode, plan/review/implement/verify
+    Workflows/         # WorkflowManifest, WorkflowLoader, WorkflowRunner
+    Tools/             # ITool, ToolPolicy, ToolContext, ToolRegistry
+    Policy/            # IPolicyEngine, DefaultPolicyEngine
+    Providers/         # IModelProvider, IProviderCapabilities
+  Agent.Tools/         # Tool implementations (ReadFile, FileEdit, RunCommand, …)
+  Agent.Workspace/     # LocalWorkspace, WorktreeWorkspace — path safety
+  Agent.Logging/       # JSONL session logger
+  Agent.Llm.Anthropic/ # Claude provider
+  Agent.Llm.OpenAI/    # OpenAI / OpenAI-compatible provider
+  Agent.Server/        # ASP.NET Core HTTP + SSE server
+tests/
+  Agent.Core.Tests/
+  Agent.Tools.Tests/
+  Agent.Server.Tests/
 ```
 
-**Session Resumption**: The orchestrator can now accept a list of previous messages to resume conversations. This enables REPL mode and session persistence.
+## Build and test commands
 
-### Event Model
+```bash
+# Build everything
+dotnet build
 
-All providers emit a standard event stream (`Agent.Core/Events/AgentEvent.cs`):
+# Run all tests (116 tests across 3 projects)
+dotnet test
 
-| Event | Description |
-|-------|-------------|
-| `TextDelta` | Streamed text from the model |
-| `ToolCallStarted` | Tool invocation begins |
-| `ToolCallArgsDelta` | Streamed tool arguments (JSON fragments) |
-| `ToolCallReady` | Tool call complete, ready for execution |
-| `ToolResultEvent` | Tool execution result |
-| `ResponseCompleted` | Model response finished |
-| `TraceEvent` | Debug/unknown events |
+# Run a single test project
+dotnet test tests/Agent.Core.Tests
+dotnet test tests/Agent.Tools.Tests
+dotnet test tests/Agent.Server.Tests
 
-### Message Types
+# Run a specific test by name pattern
+dotnet test --filter "FullyQualifiedName~ContextCompactor"
 
-The conversation history uses typed messages (`Agent.Core/Messages/ChatMessage.cs`):
+# Run the CLI
+dotnet run --project src/Agent.Cli
 
-- `UserMessage` - User input
-- `AssistantMessage` - Model response (text and/or tool calls)
-- `ToolResultMessage` - Tool execution results
-
-## Adding a New Provider
-
-1. Create a new project: `Agent.Llm.YourProvider`
-
-2. Implement `IModelProvider`:
-
-```csharp
-public class YourProvider : IModelProvider
-{
-    public string Name => "yourprovider";
-
-    public async IAsyncEnumerable<AgentEvent> StreamAsync(
-        ModelRequest request,
-        CancellationToken ct = default)
-    {
-        // 1. Build HTTP request for your API
-        // 2. Stream SSE response
-        // 3. Parse and yield AgentEvent instances
-    }
-}
+# Run the server
+dotnet run --project src/Agent.Server
 ```
 
-3. Handle these responsibilities:
-   - Convert `ModelRequest` to your API format
-   - Parse streaming response (SSE)
-   - Accumulate tool call arguments until complete
-   - Emit `ToolCallReady` only when arguments are fully received
-   - Handle unknown events gracefully with `TraceEvent`
+All tests must pass before committing. If you add a feature, add tests for it.
 
-4. Register in `Agent.Cli/Program.cs`:
+## Adding a new tool
 
-```csharp
-static IModelProvider CreateProvider(string provider, AppConfig? appConfig)
-{
-    return provider switch
-    {
-        "yourprovider" => new YourProvider(...),
-        "openai-compatible" => CreateOpenAIProvider(httpClient, endpoint, requireApiKey: false),
-        // ...
-    };
-}
-```
-
-**Note:** The `CreateProvider` function now accepts an `AppConfig?` parameter to support YAML-based configuration.
-
-## Adding a New Tool
-
-1. Create a class in `Agent.Tools`:
+1. Create a class in `Agent.Tools/`:
 
 ```csharp
 public class MyTool : ITool
 {
     public string Name => "MyTool";
-    public string Description => "Does something useful";
-    public ToolPolicy Policy => new() { IsReadOnly = true };
+    public string Description => "Does X";
+    public ToolPolicy Policy => new() { IsReadOnly = true, IsConcurrencySafe = true };
+    public string InputSchema => """{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}""";
 
-    public string InputSchema => """
+    public async Task<ToolResult> ExecuteAsync(JsonElement args, ToolContext ctx, CancellationToken ct)
     {
-        "type": "object",
-        "properties": {
-            "param1": { "type": "string", "description": "..." }
-        },
-        "required": ["param1"]
-    }
-    """;
-
-    public async Task<ToolResult> ExecuteAsync(
-        JsonElement args,
-        ToolContext ctx,
-        CancellationToken ct)
-    {
-        var param1 = args.GetProperty("param1").GetString()!;
-
-        // Do work...
-
+        var path = ctx.Workspace.ResolvePath(args.GetProperty("path").GetString()!);
+        if (path is null) return ToolResult.Failure("Path outside workspace");
+        // ...
         return ToolResult.Success(new { result = "..." });
     }
 }
 ```
 
-2. Register in `Agent.Cli/Program.cs`:
+2. Register in both `Agent.Cli/Program.cs` and `Agent.Server/Program.cs` (both have a `CreateToolRegistry` function).
+
+### ToolPolicy fields
+
+| Field | Effect |
+|-------|--------|
+| `IsReadOnly` | Does not modify files or state |
+| `IsConcurrencySafe` | Eligible for `Task.WhenAll` batching with other read-only tools |
+| `RequiresApproval` | User must approve before execution |
+| `Risk` | `Low` / `Medium` / `High` — High blocks auto-approve |
+| `ProducesProgress` | Tool calls `ctx.Progress?.Report(...)` |
+| `IsExternalSideEffect` | Affects systems outside the repo |
+
+Consecutive tools with `IsReadOnly && IsConcurrencySafe` run in parallel via `Task.WhenAll`.
+Non-parallel tools act as barriers — order is always preserved.
+
+Always resolve file paths through `ctx.Workspace.ResolvePath()`. Never access the filesystem directly.
+
+## Adding a new execution mode
+
+Implement `IExecutionMode` in `Agent.Core/Modes/` and register in `ExecutionModeRegistry`:
 
 ```csharp
-static ToolRegistry CreateToolRegistry()
+public class MyMode : IExecutionMode
 {
-    var registry = new ToolRegistry();
-    registry.Register(new MyTool());
-    // ...
-    return registry;
+    public string Name => "mymode";
+    public string PromptFragment => "Focus only on ...";
+    public Func<ITool, bool> ToolFilter => tool => tool.Policy.IsReadOnly;
 }
 ```
 
-### Tool Guidelines
+`ToolFilter` restricts which tools are available in that mode.
+`PromptFragment` is appended to the system prompt each turn.
 
-- **Use `ToolContext.Workspace`** for file path resolution
-- **Return structured data** in `ToolResult.Data` for model consumption
-- **Set appropriate `ToolPolicy`**:
-  - `IsReadOnly = true` for read-only operations
-  - `RequiresApproval = true` for dangerous operations
-  - `Risk = RiskLevel.High` for potentially destructive operations
-- **Handle errors gracefully** with `ToolResult.Failure()`
+## Adding a new provider
 
-## Policy System
-
-The policy engine (`Agent.Core/Policy/`) controls tool execution:
+Implement `IModelProvider` (and optionally `IProviderCapabilities`) in a new `Agent.Llm.*` project:
 
 ```csharp
-public interface IPolicyEngine
+public class MyProvider : IModelProvider, IProviderCapabilities
 {
-    Task<PolicyDecision> EvaluateAsync(ITool tool, string argsJson);
-}
+    public string Name => "myprovider";
+    public int ContextWindowTokens => 128_000;
 
-public enum PolicyDecision
-{
-    Allowed,        // Execute immediately
-    RequiresApproval, // Ask user first
-    Denied          // Block execution
-}
-```
-
-### Default Policy Rules
-
-1. Tools with `RequiresApproval = true` always require approval
-2. `RunCommand` with dangerous commands requires approval
-3. Auto-approve mode (`--yes`) bypasses all approval checks
-
-### Custom Policy Rules
-
-Extend `DefaultPolicyEngine` or implement `IPolicyEngine`:
-
-```csharp
-public class CustomPolicyEngine : IPolicyEngine
-{
-    public Task<PolicyDecision> EvaluateAsync(ITool tool, string argsJson)
+    public async IAsyncEnumerable<AgentEvent> StreamAsync(ModelRequest request, CancellationToken ct)
     {
-        // Custom logic based on tool, args, or context
+        // Yield TextDelta, ToolCallStarted, ToolCallArgsDelta, ToolCallReady, ResponseCompleted
     }
 }
 ```
 
-## Workspace Safety
+Register in the `CreateProvider` switch in `Agent.Cli/Program.cs` and `Agent.Server/Program.cs`.
 
-The workspace (`Agent.Workspace/LocalWorkspace.cs`) ensures file operations stay within bounds:
+## Session state
 
-```csharp
-public interface IWorkspace
-{
-    string Root { get; }
-    string? ResolvePath(string relativePath);  // Returns null if unsafe
-    bool IsPathSafe(string fullPath);
-}
-```
+`SessionState` is mutable shared state passed through `AgentOptions.State`.
+Stale reads are acceptable — the orchestrator writes it; CLI/server read it for display.
+Notes in `SessionState.Notes` are persisted via session log tombstoning and survive resume.
 
-### Safety Checks
+`ContextCompactor.NeedsCompaction(messages, state.MaxContextTokens)` returns true at 80% of the context window.
+When true, the orchestrator calls `CompactSlidingWindow` before the next request.
+Compaction groups messages into turns (user → assistant → tool_results) and trims oldest turns first.
+The first user message (the task) is always preserved.
 
-1. **Path traversal**: Blocks `../` escapes
-2. **Absolute paths**: Rejects paths starting with `/` or `C:\`
-3. **Symlink escape**: Validates symlink targets stay within root
-4. **Prefix matching**: Ensures resolved path is truly under root
+## Session log format
 
-## Session Logging
+Logs are JSONL files in `.agent/session_<id>.jsonl`.
+`SessionLogReader` replays them to reconstruct conversation history on resume.
+Work notes are stored as `work_note` entries (key/value) and `work_note_clear_all`.
+The reader replays these in order to recover the final notes state.
 
-The logger (`Agent.Logging/JsonlSessionLogger.cs`) records all activity:
+## Testing conventions
 
-```csharp
-public interface ISessionLogger : IAsyncDisposable
-{
-    Task LogAsync<T>(T entry);
-}
-```
-
-### Log Entry Format
-
-```json
-{"timestamp":"2024-01-15T10:30:00Z","data":{"type":"session_start","sessionId":"abc123","mode":"repl","resumed":false}}
-{"timestamp":"2024-01-15T10:30:00Z","data":{"type":"user_prompt","content":"..."}}
-{"timestamp":"2024-01-15T10:30:00Z","data":{"type":"message","role":"user","content":"..."}}
-{"timestamp":"2024-01-15T10:30:01Z","data":{"type":"event","eventType":"TextDelta",...}}
-{"timestamp":"2024-01-15T10:30:02Z","data":{"type":"message","role":"assistant","content":"...","toolCalls":[...]}}
-{"timestamp":"2024-01-15T10:30:03Z","data":{"type":"message","role":"tool","callId":"...","result":{...}}}
-```
-
-### Session Resumption
-
-The `SessionLogReader` class (`Agent.Cli/SessionLogReader.cs`) can parse session logs and reconstruct the conversation history:
+- Tests use xUnit + FluentAssertions.
+- Use `.Should().Be()`, `.Should().BeTrue()`, `.Should().Contain()` etc.
+- Do NOT use `is` pattern matching inside FluentAssertions expression trees — use `.OfType<T>().Should()...` instead.
+- Integration tests in `Agent.Tools.Tests` use a real temp directory; clean up with `TempDir` fixtures.
+- For orchestrator/provider tests, use a mock `IModelProvider` that yields a fixed event sequence.
 
 ```csharp
-var messages = SessionLogReader.LoadMessages(sessionPath, warning =>
-{
-    Console.WriteLine($"Warning: {warning}");
-});
+// Correct
+result.OfType<UserMessage>().Should().Contain(m => m.Content.Contains("compacted"));
+
+// Wrong — throws at runtime
+result.Should().Contain(m => m is UserMessage um && um.Content.Contains("compacted"));
 ```
 
-This enables:
-- Resuming conversations across CLI invocations
-- REPL mode with persistent context
-- Debugging and replay of agent sessions
+## TikToken dependency
 
-## Error Handling
+`Agent.Core` uses `Tiktoken` NuGet for token estimation.
+Use `ModelToEncoder.For("gpt-4")` to get the cl100k_base encoder — not `ModelToEncoder.For("cl100k_base")` (that throws).
+`Agent.Core.csproj` references `System.Text.Json` 9.0.5 to satisfy Tiktoken's transitive dependency.
+Do not downgrade it.
 
-### Provider Errors
+## Workflow manifests
 
-- HTTP errors yield `TraceEvent("error", ...)` followed by `ResponseCompleted("error", null)`
-- JSON parse errors yield `TraceEvent("parse_error", rawJson)` and continue
-
-### Tool Errors
-
-- Return `ToolResult.Failure(message)` with descriptive error
-- Include `Diagnostics` for structured error information
-- Never throw exceptions from tool execution
-
-### Orchestrator Errors
-
-- Catches exceptions and logs them
-- Unknown tools return failure result
-- Policy denials return failure result
-
-## Testing
-
-### Unit Tests
-
-```csharp
-[Fact]
-public async Task MyTool_ValidInput_ReturnsSuccess()
-{
-    var tool = new MyTool();
-    var args = JsonDocument.Parse("""{"param1": "value"}""").RootElement;
-    var context = new ToolContext { ... };
-
-    var result = await tool.ExecuteAsync(args, context, CancellationToken.None);
-
-    result.Ok.Should().BeTrue();
-}
-```
-
-### Integration Tests
-
-For provider tests, mock the HTTP client or use a test server:
-
-```csharp
-[Fact]
-public async Task Provider_StreamsEvents()
-{
-    var handler = new MockHttpHandler(sseResponse);
-    var provider = new ClaudeProvider(new HttpClient(handler), "test-key");
-
-    var events = await provider.StreamAsync(request).ToListAsync();
-
-    events.Should().ContainItemsAssignableTo<TextDelta>();
-}
-```
-
-## Performance Considerations
-
-1. **Streaming**: Always use async enumerable for model responses
-2. **Cancellation**: Propagate `CancellationToken` through all async calls
-3. **Memory**: Don't buffer entire responses; process events as they arrive
-4. **Timeouts**: Set appropriate timeouts for HTTP and subprocess calls
-5. **Output limits**: Truncate large tool outputs to prevent context explosion
-
-## Agent.Server Architecture
-
-`Agent.Server` is an ASP.NET Core web application that exposes agent functionality over HTTP with Server-Sent Events (SSE) for streaming.
-
-### Key Components
-
-#### Session Management (`InMemorySessionStore`)
-
-Manages concurrent agent sessions with thread-safe access:
-
-```csharp
-public interface ISessionStore
-{
-    SessionRuntime Create(CreateSessionRequest request);
-    bool TryAdd(SessionRuntime session);
-    bool TryGet(string id, out SessionRuntime session);
-}
-```
-
-#### Session Runtime (`SessionRuntime`)
-
-Encapsulates a running agent session:
-
-- **AgentOrchestrator**: Core agent logic
-- **ServerApprovalService**: Handles async approval requests
-- **Event channel**: Broadcasts server events to SSE clients
-- **Stream lock**: Ensures only one SSE connection per session
-
-#### Server Events (`ServerEvent`)
-
-Standardized event format for SSE streaming:
-
-| Event Type | Description |
-|------------|-------------|
-| `text_delta` | Streamed text from model |
-| `tool_call` | Tool invocation started |
-| `tool_result` | Tool execution completed |
-| `approval_required` | Waiting for user approval |
-| `completed` | Agent iteration finished |
-| `error` | Error occurred |
-| `trace` | Debug/diagnostic information |
-
-#### Approval Service (`ServerApprovalService`)
-
-Non-blocking approval workflow using `TaskCompletionSource`:
-
-```csharp
-public class ServerApprovalService : IApprovalService
-{
-    public async Task<bool> RequestApprovalAsync(string callId, ITool tool, string argsJson)
-    {
-        // 1. Emit approval_required event
-        // 2. Create TaskCompletionSource for this callId
-        // 3. Wait for client to POST to /api/sessions/{id}/approvals/{callId}
-        // 4. Return approval decision
-    }
-}
-```
-
-### API Workflow
-
-1. **Create Session**: `POST /api/sessions` → Creates runtime, returns session ID
-2. **Connect SSE**: `GET /api/sessions/{id}/stream` → Opens event stream
-3. **Send Message**: `POST /api/sessions/{id}/chat` → Triggers agent loop
-4. **Stream Events**: Server pushes events via SSE as agent processes
-5. **Handle Approvals**: Client posts approval decision when prompted
-6. **Repeat**: Client sends more messages as needed
-
-### Session Resumption
-
-The server supports resuming sessions from JSONL logs:
-
-```csharp
-POST /api/sessions/{id}/resume
-{
-  "workspacePath": "/path/to/repo",
-  "provider": "openai",
-  "model": "gpt-5.4-mini"
-}
-```
-
-The `SessionLogReader` parses the log file and reconstructs the conversation history, enabling stateless server restarts while preserving context.
-
-### Client Implementation
-
-The `server-client.mjs` script demonstrates:
-
-- Creating/resuming sessions
-- SSE stream parsing
-- Interactive approval handling
-- REPL-style user interaction
-
-### Adding New Server Features
-
-To add a new server capability:
-
-1. **Define the event**: Add to `ServerEvent` in `Models/ServerEvents.cs`
-2. **Emit from runtime**: Update `SessionRunner` to broadcast the event
-3. **Handle in client**: Add case to `handleEvent()` in client script
-4. **Test**: Add test case in `Agent.Server.Tests`
-
-### Server Configuration
-
-Environment variables:
-
-- `ASPNETCORE_URLS`: Server bind address (default: `http://localhost:5000`)
-- `ANTHROPIC_API_KEY` / `OPENAI_API_KEY`: LLM provider credentials
-- `OPENAI_BASE_URL`: Custom base URL for OpenAI provider (optional)
-
-YAML configuration (`asdv.yaml` in workspace root):
+YAML files loaded by `WorkflowLoader`. Steps run sequentially; a failed step (AgentError or MaxIterationsReached) stops the workflow.
 
 ```yaml
-provider: openai-compatible
-model: your-model-name
-openaiCompatibleEndpoint: http://127.0.0.1:8080
+name: "my-workflow"
+steps:
+  - mode: "plan"
+    prompt: "Analyze and plan"
+    maxIterations: 5
+  - mode: "implement"
+    prompt: "Implement the plan"
+    maxIterations: 15
+  - mode: "verify"
+    maxIterations: 5
 ```
 
-The server automatically loads `asdv.yaml` from the workspace directory if present. This enables using local LLM servers (llama.cpp, vLLM, Ollama, etc.) without requiring API keys.
+`mode` must match a name registered in `ExecutionModeRegistry`. An unknown mode yields `AgentError` and stops.
+
+## Worktree isolation
+
+`WorktreeWorkspace` creates a git worktree branch, runs the agent in it, then merges back.
+Check exit codes of both `git add` and `git commit` before attempting merge — do not assume they succeed.
+
+## PR conventions
+
+- One logical change per commit.
+- Commit message: short imperative summary, e.g. `Add WorktreeWorkspace for git isolation`.
+- All 3 test projects must be green before opening a PR.
+- The server (`Agent.Server`) and CLI (`Agent.Cli`) share the same `Agent.Core` orchestrator — changes to the orchestrator affect both surfaces.
