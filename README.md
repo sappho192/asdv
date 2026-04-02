@@ -1,6 +1,6 @@
 # ASDV (Agile Synthetic Dev Vibe)
 A .NET 8 coding agent that operates on local repositories with a clean, event-driven architecture.  
-Supports OpenAI, Anthropic, and OpenAI-compatible endpoints (llama.cpp, vLLM, Ollama, OpenRouter) with full provider freedom.
+Supports OpenAI, Anthropic, OpenRouter, and OpenAI-compatible endpoints (llama.cpp, vLLM, Ollama) with full provider freedom.
 
 ## Features
 
@@ -78,7 +78,7 @@ dotnet run --project src/Agent.Cli -- --session-id abc123 --resume-mode last-3
 | Option | Alias | Description | Default |
 |--------|-------|-------------|---------|
 | `--repo` | `-r` | Repository root path | Current directory |
-| `--provider` | `-p` | LLM provider (`openai`, `anthropic`, `openai-compatible`) | `openai` |
+| `--provider` | `-p` | LLM provider (`openai`, `anthropic`, `openrouter`, `openai-compatible`) | `openai` |
 | `--model` | `-m` | Model name | Provider-specific |
 | `--config` | `-c` | YAML config path (default: `asdv.yaml` in repo root) | None |
 | `--yes` | `-y` | Auto-approve all tool calls | `false` |
@@ -101,8 +101,9 @@ src/
     Session/           # SessionState, TokenEstimator, ContextCompactor
     Modes/             # IExecutionMode, Plan/Review/Implement/Verify modes, registry
     Workflows/         # WorkflowManifest, WorkflowLoader, WorkflowRunner
-  Agent.Llm.Anthropic/ # Claude Messages API provider
+  Agent.Llm.Anthropic/  # Claude Messages API provider
   Agent.Llm.OpenAI/    # OpenAI Chat Completions API provider
+  Agent.Llm.OpenRouter/ # OpenRouter provider
   Agent.Tools/         # Tool implementations (read, edit, search, git, shell)
   Agent.Workspace/     # File system safety, WorktreeWorkspace for git worktree isolation
   Agent.Logging/       # JSONL session logging
@@ -158,11 +159,13 @@ This eliminates code duplication and ensures both surfaces behave identically.
 | `ANTHROPIC_API_KEY` | API key for Anthropic Claude |
 | `OPENAI_API_KEY` | API key for OpenAI |
 | `OPENAI_BASE_URL` | Custom base URL for OpenAI (optional) |
+| `OPENROUTER_API_KEY` | API key for OpenRouter |
 
 ### Default Models
 
 - **Anthropic**: `claude-sonnet-4-20250514`
 - **OpenAI**: `gpt-5.4-mini`
+- **OpenRouter**: `anthropic/claude-sonnet-4-5`
 
 ### Project-Level Prompt (`.asdv/prompt.md`)
 
@@ -178,9 +181,14 @@ The content is appended to the base system prompt automatically.
 You can define default settings in `asdv.yaml` at the repo root and run without extra flags:
 
 ```yaml
-provider: openai-compatible
-model: gpt-oss-20b
-openaiCompatibleEndpoint: http://127.0.0.1:8080
+# OpenRouter
+provider: openrouter
+model: anthropic/claude-sonnet-4-5
+
+# OpenAI-compatible local endpoint
+# provider: openai-compatible
+# model: gpt-oss-20b
+# openaiCompatibleEndpoint: http://127.0.0.1:8080
 ```
 
 ## Session Logs
@@ -252,6 +260,7 @@ Agent.Cli
   └── Agent.Workspace
   └── Agent.Llm.Anthropic
   └── Agent.Llm.OpenAI
+  └── Agent.Llm.OpenRouter
   └── Agent.Logging
 ```
 

@@ -8,6 +8,7 @@ using Agent.Core.Config;
 using Agent.Logging;
 using Agent.Llm.Anthropic;
 using Agent.Llm.OpenAI;
+using Agent.Llm.OpenRouter;
 using Agent.Server.Models;
 using Agent.Tools;
 using Agent.Workspace;
@@ -129,7 +130,12 @@ public sealed class SessionRuntimeFactory
                 httpClient,
                 Environment.GetEnvironmentVariable("OPENAI_API_KEY"),
                 GetRequiredOpenAICompatibleEndpoint(appConfig)),
-            _ => throw new ArgumentException($"Unknown provider: {provider}")
+            "openrouter" => new OpenRouterProvider(
+                httpClient,
+                Environment.GetEnvironmentVariable("OPENROUTER_API_KEY")
+                    ?? throw new InvalidOperationException(
+                        "OPENROUTER_API_KEY environment variable is not set")),
+            _ => throw new ArgumentException($"Unknown provider: {provider}. Use 'openai', 'anthropic', 'openai-compatible', or 'openrouter'.")
         };
     }
 
@@ -160,7 +166,8 @@ public sealed class SessionRuntimeFactory
             "openai" => "gpt-5.4-mini",
             "openai-compatible" => throw new ArgumentException(
                 "Model is required for openai-compatible provider. Provide Model in the request or asdv.yaml."),
-            _ => throw new ArgumentException($"Unknown provider: {provider}")
+            "openrouter" => "anthropic/claude-sonnet-4-5",
+            _ => throw new ArgumentException($"Unknown provider: {provider}. Use 'openai', 'anthropic', 'openai-compatible', or 'openrouter'.")
         };
     }
 

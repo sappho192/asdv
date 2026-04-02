@@ -24,8 +24,9 @@ src/
   Agent.Tools/         # Tool implementations (ReadFile, FileEdit, RunCommand, …)
   Agent.Workspace/     # LocalWorkspace, WorktreeWorkspace — path safety
   Agent.Logging/       # JSONL session logger
-  Agent.Llm.Anthropic/ # Claude provider
+  Agent.Llm.Anthropic/  # Claude provider
   Agent.Llm.OpenAI/    # OpenAI / OpenAI-compatible provider
+  Agent.Llm.OpenRouter/ # OpenRouter provider (dynamic model capabilities, cost tracking)
   Agent.Server/        # ASP.NET Core HTTP + SSE server
 tests/
   Agent.Core.Tests/
