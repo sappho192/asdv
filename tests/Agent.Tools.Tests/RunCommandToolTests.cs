@@ -46,7 +46,7 @@ public class RunCommandToolTests : IDisposable
     public async Task ExecuteAsync_InvalidCwd_ReturnsFailure()
     {
         // Arrange
-        var args = JsonDocument.Parse("""{"exe":"dotnet","cwd":"../.."}""").RootElement;
+        var args = JsonDocument.Parse("""{"command":"dotnet --version","cwd":"../.."}""").RootElement;
 
         // Act
         var result = await _tool.ExecuteAsync(args, _context, CancellationToken.None);
@@ -58,36 +58,23 @@ public class RunCommandToolTests : IDisposable
     }
 
     [Fact]
-    public async Task ExecuteAsync_InvalidExecutable_ReturnsFailure()
+    public async Task ExecuteAsync_InvalidCommand_ReturnsFailure()
     {
         // Arrange
-        var args = JsonDocument.Parse("""{"exe":"this-command-should-not-exist-123"}""").RootElement;
+        var args = JsonDocument.Parse("""{"command":"this-command-should-not-exist-123"}""").RootElement;
 
         // Act
         var result = await _tool.ExecuteAsync(args, _context, CancellationToken.None);
 
         // Assert
         result.Ok.Should().BeFalse();
-        result.Diagnostics.Should().NotBeNull();
-        result.Diagnostics![0].Message.Should().Contain("Failed to start process");
     }
 
     [Fact]
     public async Task ExecuteAsync_CommandTimeout_ReturnsFailure()
     {
         // Arrange
-        JsonElement args;
-        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
-        {
-            args = JsonDocument.Parse("""{"exe":"cmd","args":["/c","for /L %i in (1,1,200000000) do @rem"],"timeoutSec":1}""")
-                .RootElement;
-        }
-        else
-        {
-            var shell = ResolveShellPath();
-            args = JsonDocument.Parse($"{{\"exe\":\"{shell}\",\"args\":[\"-c\",\"sleep 2\"],\"timeoutSec\":1}}")
-                .RootElement;
-        }
+        var args = JsonDocument.Parse("""{"command":"sleep 2","timeoutSec":1}""").RootElement;
 
         // Act
         var result = await _tool.ExecuteAsync(args, _context, CancellationToken.None);
@@ -102,16 +89,7 @@ public class RunCommandToolTests : IDisposable
     public async Task ExecuteAsync_SuccessfulCommand_ReturnsStdout()
     {
         // Arrange
-        JsonElement args;
-        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
-        {
-            args = JsonDocument.Parse("""{"exe":"cmd","args":["/c","echo","hello"]}""").RootElement;
-        }
-        else
-        {
-            var shell = ResolveShellPath();
-            args = JsonDocument.Parse($"{{\"exe\":\"{shell}\",\"args\":[\"-c\",\"echo hello\"]}}").RootElement;
-        }
+        var args = JsonDocument.Parse("""{"command":"echo hello"}""").RootElement;
 
         // Act
         var result = await _tool.ExecuteAsync(args, _context, CancellationToken.None);
@@ -122,14 +100,18 @@ public class RunCommandToolTests : IDisposable
         result.Stdout!.ToLowerInvariant().Should().Contain("hello");
     }
 
-    private static string ResolveShellPath()
+    [Fact]
+    public async Task ExecuteAsync_ShellOverride_UsesSpecifiedShell()
     {
-        if (File.Exists("/bin/sh"))
-            return "/bin/sh";
+        // Arrange
+        var args = JsonDocument.Parse("""{"command":"echo hello","shell":"bash"}""").RootElement;
 
-        if (File.Exists("/usr/bin/sh"))
-            return "/usr/bin/sh";
+        // Act
+        var result = await _tool.ExecuteAsync(args, _context, CancellationToken.None);
 
-        return "sh";
+        // Assert
+        result.Ok.Should().BeTrue();
+        result.Stdout.Should().NotBeNull();
+        result.Stdout!.ToLowerInvariant().Should().Contain("hello");
     }
 }

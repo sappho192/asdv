@@ -1,12 +1,13 @@
 using System.Text.Json;
 using Agent.Core.Tools;
+using Agent.Tools.Hashline;
 
 namespace Agent.Tools;
 
 public class ReadFileTool : ITool
 {
     public string Name => "ReadFile";
-    public string Description => "Read contents of a file within the repository";
+    public string Description => "Read contents of a file with hashline format (LINE#HASH|content). Use the LINE#HASH references with HashlineEdit for precise editing.";
     public ToolPolicy Policy => new() { IsReadOnly = true, IsConcurrencySafe = true };
 
     public string InputSchema => """
@@ -44,8 +45,13 @@ public class ReadFileTool : ITool
         startLine = Math.Max(1, startLine);
         endLine = Math.Min(lines.Length, endLine);
 
-        var selectedLines = lines.Skip(startLine - 1).Take(endLine - startLine + 1);
-        var content = string.Join(Environment.NewLine, selectedLines);
+        // Build hashline-formatted output
+        var hashlineOutput = new System.Text.StringBuilder();
+        for (int i = startLine; i <= endLine; i++)
+        {
+            if (i > startLine) hashlineOutput.Append('\n');
+            hashlineOutput.Append(HashlineComputation.FormatHashLine(i, lines[i - 1]));
+        }
 
         return ToolResult.Success(new
         {
@@ -53,7 +59,7 @@ public class ReadFileTool : ITool
             startLine,
             endLine,
             totalLines = lines.Length,
-            content
+            content = hashlineOutput.ToString()
         });
     }
 }

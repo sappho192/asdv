@@ -37,12 +37,14 @@ public class FileEditTool : ITool
 
         if (!File.Exists(fullPath))
         {
-            return ToolResult.Failure($"File not found: {filePath}");
+            return FailWithHint($"File not found: {filePath}",
+                "Use WriteFile to create new files, or check the path with ListFiles.");
         }
 
         if (string.IsNullOrEmpty(oldString))
         {
-            return ToolResult.Failure("old_string must not be empty.");
+            return FailWithHint("old_string must not be empty.",
+                "To create a new file, use WriteFile. To insert content, use HashlineEdit with append/prepend.");
         }
 
         var content = await File.ReadAllTextAsync(fullPath, ct);
@@ -50,13 +52,16 @@ public class FileEditTool : ITool
         var count = CountOccurrences(content, oldString);
         if (count == 0)
         {
-            return ToolResult.Failure("old_string not found in file.");
+            return FailWithHint("old_string not found in file.",
+                "The file content may have changed. Re-read the file first. " +
+                "For large replacements, prefer HashlineEdit (line-based) or WriteFile (full rewrite).");
         }
 
         if (count > 1 && !replaceAll)
         {
-            return ToolResult.Failure(
-                $"old_string found {count} times. Set replaceAll=true to replace all, or provide more context to make it unique.");
+            return FailWithHint(
+                $"old_string found {count} times. Set replaceAll=true to replace all, or provide more context to make it unique.",
+                "Alternatively, use HashlineEdit with specific LINE#HASH references for precise editing.");
         }
 
         if (oldString == newString)
@@ -72,12 +77,36 @@ public class FileEditTool : ITool
 
         var replacedCount = replaceAll ? count : 1;
 
-        return ToolResult.Success(new
+        // Post-edit validation
+        var diagnostics = new List<Diagnostic>();
+        var validation = await FileValidation.ValidateFileAsync(fullPath, ctx, ct);
+        if (validation != null)
+            diagnostics.Add(validation);
+
+        return new ToolResult
         {
-            filePath,
-            replacements = replacedCount,
-            message = $"Replaced {replacedCount} occurrence(s) in {filePath}"
-        });
+            Ok = true,
+            Data = new
+            {
+                filePath,
+                replacements = replacedCount,
+                message = $"Replaced {replacedCount} occurrence(s) in {filePath}"
+            },
+            Diagnostics = diagnostics.Count > 0 ? diagnostics : null
+        };
+    }
+
+    private static ToolResult FailWithHint(string message, string hint)
+    {
+        return new ToolResult
+        {
+            Ok = false,
+            Diagnostics =
+            [
+                new Diagnostic("Error", message),
+                new Diagnostic("Hint", hint)
+            ]
+        };
     }
 
     private static int CountOccurrences(string text, string search)

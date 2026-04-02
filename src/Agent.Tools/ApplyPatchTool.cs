@@ -176,9 +176,18 @@ public class ApplyPatchTool : ITool
 
         if (failedPatches.Count > 0 && appliedFiles.Count == 0)
         {
-            return ToolResult.Failure(
-                $"All patches failed to apply",
-                JsonSerializer.Serialize(failedPatches));
+            return new ToolResult
+            {
+                Ok = false,
+                Stderr = JsonSerializer.Serialize(failedPatches),
+                Diagnostics =
+                [
+                    new Diagnostic("Error", "All patches failed to apply"),
+                    new Diagnostic("Hint",
+                        "If patch format is causing issues, consider using WriteFile to write the complete file content, " +
+                        "or HashlineEdit for line-based edits with LINE#HASH references.")
+                ]
+            };
         }
 
         if (failedPatches.Count > 0)

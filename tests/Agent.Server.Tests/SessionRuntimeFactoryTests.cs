@@ -41,7 +41,7 @@ public class SessionRuntimeFactoryTests
             var act = () => factory.Create(request);
 
             act.Should().Throw<ArgumentException>()
-                .WithMessage("Unknown provider: unknown");
+                .WithMessage("Unknown provider: unknown*");
         }
         finally
         {

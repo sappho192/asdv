@@ -6,7 +6,9 @@ Supports OpenAI, Anthropic, OpenRouter, and OpenAI-compatible endpoints (llama.c
 
 - **Provider freedom**: Switch between OpenAI, Anthropic, local LLMs, and OpenRouter — no vendor lock-in
 - **Event-driven core**: Unified `IAsyncEnumerable<AgentEvent>` orchestrator shared by CLI and HTTP server
-- **Tool system**: File read/edit, glob search, regex grep, git operations, and shell commands
+- **Tool system**: File read (hashline format), hashline edit, file write, file edit, glob search, regex grep, git operations, and shell commands
+- **Hashline editing**: Content-hash-tagged line references (LINE#HASH) for reliable, precise edits even with weak models
+- **Environment detection**: Auto-detects git repo, Node.js, Python availability at session start
 - **Interactive commands**: `/status`, `/help`, `/diff`, `/notes`, `/mode`, `/workflow` for session inspection and control
 - **Session management**: Mutable session state with token estimation, context compaction, and session notes
 - **Execution modes**: Plan, Review, Implement, Verify modes with tool filtering and mode-specific prompts
@@ -129,14 +131,33 @@ This eliminates code duplication and ensures both surfaces behave identically.
 
 | Tool | Description | Requires Approval |
 |------|-------------|-------------------|
-| `ReadFile` | Read file contents with optional line range | No |
+| `ReadFile` | Read file contents in hashline format (`LINE#HASH\|content`) | No |
 | `ListFiles` | List files matching glob patterns (supports `path`, `sortBy=modified`) | No |
 | `SearchText` | Search for text patterns with regex (supports `contextLines`, `caseSensitive`) | No |
 | `GitStatus` | Get repository status | No |
 | `GitDiff` | View staged/unstaged changes | No |
+| `WriteFile` | Create new files or overwrite existing files | Yes |
 | `FileEdit` | Precise string replacement in files | Yes |
+| `HashlineEdit` | Edit files using LINE#HASH references (replace/append/prepend) | Yes |
 | `ApplyPatch` | Apply unified diff or Begin Patch format patches | Yes |
 | `RunCommand` | Execute shell commands | Yes |
+
+### Hashline Editing
+
+ReadFile outputs lines in hashline format: `LINE#HASH|content` where HASH is a 2-character content hash (e.g., `10#VK|const app = express();`). Use these LINE#HASH references with HashlineEdit for precise, reliable edits:
+
+```json
+{
+  "filePath": "app.js",
+  "edits": [
+    { "op": "replace", "pos": "10#VK", "lines": "const app = fastify();" },
+    { "op": "append", "pos": "10#VK", "lines": "app.register(cors);" },
+    { "op": "replace", "pos": "5#XJ", "end": "8#MB", "lines": "// replaced range" }
+  ]
+}
+```
+
+This approach is significantly more reliable than exact-string matching, especially for weak models and CJK content.
 
 ### REPL Commands
 

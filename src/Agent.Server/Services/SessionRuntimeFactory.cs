@@ -211,7 +211,9 @@ public sealed class SessionRuntimeFactory
         registry.Register(new SearchTextTool());
         registry.Register(new GitStatusTool());
         registry.Register(new GitDiffTool());
+        registry.Register(new WriteFileTool());
         registry.Register(new FileEditTool());
+        registry.Register(new HashlineEditTool());
         registry.Register(new ApplyPatchTool());
         registry.Register(new RunCommandTool());
         registry.Register(new WorkNotesTool());

@@ -21,7 +21,8 @@ src/
     Tools/             # ITool, ToolPolicy, ToolContext, ToolRegistry
     Policy/            # IPolicyEngine, DefaultPolicyEngine
     Providers/         # IModelProvider, IProviderCapabilities
-  Agent.Tools/         # Tool implementations (ReadFile, FileEdit, RunCommand, …)
+  Agent.Tools/         # Tool implementations (ReadFile, WriteFile, HashlineEdit, FileEdit, RunCommand, …)
+    Hashline/          # Hashline computation, validation, edit operations, autocorrect, dedup
   Agent.Workspace/     # LocalWorkspace, WorktreeWorkspace — path safety
   Agent.Logging/       # JSONL session logger
   Agent.Llm.Anthropic/  # Claude provider
@@ -60,6 +61,44 @@ dotnet run --project src/Agent.Server
 
 All tests must pass before committing. If you add a feature, add tests for it.
 
+## Hashline editing system
+
+ReadFile outputs lines in hashline format: `LINE#HASH|content`. The 2-char hash is computed via xxHash32 (System.IO.Hashing) using the `ZPMQVRWSNKTXJBYH` character set (256 combinations).
+
+HashlineEdit accepts `replace`, `append`, `prepend` operations using `LINE#HASH` anchors:
+- Hash validation detects stale references (file changed since read)
+- Batch edits are sorted bottom-up and deduplicated
+- Overlapping range edits are detected and rejected
+- Autocorrect restores wrapped lines and indentation
+- BOM and line endings are preserved
+
+Key files:
+- `Agent.Tools/Hashline/HashlineComputation.cs` — CID generation
+- `Agent.Tools/Hashline/HashlineValidation.cs` — Line ref parsing, hash mismatch error
+- `Agent.Tools/Hashline/HashlineEditOperations.cs` — Core edit engine
+- `Agent.Tools/Hashline/HashlineAutocorrect.cs` — Wrapped line restoration
+- `Agent.Tools/Hashline/HashlineDeduplication.cs` — Duplicate edit removal
+- `Agent.Tools/Hashline/FileTextCanonicalization.cs` — BOM/line-ending preservation
+
+## Environment detection
+
+`EnvironmentDetector.Detect(repoRoot)` runs at session start and checks:
+- Git repository presence (`.git` directory)
+- Node.js availability (`node --version`)
+- Python availability (`python3 --version`)
+
+Results are injected into the system prompt `## Environment` section.
+`FileValidation.SetEnvironment()` uses these results to enable/disable post-edit syntax validation.
+
+## Post-edit validation
+
+`FileValidation.ValidateFileAsync()` runs after file modifications:
+- JSON/XML: validated natively via `System.Text.Json` / `System.Xml`
+- JS files: `node --check` (if Node.js detected)
+- Python files: `python3 -c "import ast; ast.parse(...)"` (if Python detected)
+
+Validation failures add `Diagnostic("ValidationWarning", ...)` to the tool result — they warn the model but don't block the edit.
+
 ## Adding a new tool
 
 1. Create a class in `Agent.Tools/`:
@@ -82,7 +121,7 @@ public class MyTool : ITool
 }
 ```
 
-2. Register in both `Agent.Cli/Program.cs` and `Agent.Server/Program.cs` (both have a `CreateToolRegistry` function).
+2. Register in both `Agent.Cli/Program.cs` and `Agent.Server/Services/SessionRuntimeFactory.cs` (both have a `CreateToolRegistry` function).
 
 ### ToolPolicy fields
 
