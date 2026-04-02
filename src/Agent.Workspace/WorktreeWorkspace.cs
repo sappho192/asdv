@@ -68,8 +68,13 @@ public sealed class WorktreeWorkspace : IWorkspace, IDisposable
         var statusResult = await RunGitAsync(WorktreePath, "status --porcelain", ct);
         if (!string.IsNullOrWhiteSpace(statusResult.Stdout))
         {
-            await RunGitAsync(WorktreePath, "add -A", ct);
-            await RunGitAsync(WorktreePath, "commit -m \"asdv: worktree changes\"", ct);
+            var addResult = await RunGitAsync(WorktreePath, "add -A", ct);
+            if (addResult.ExitCode != 0)
+                return (false, $"Failed to stage changes: {addResult.Stderr}");
+
+            var commitResult = await RunGitAsync(WorktreePath, "commit -m \"asdv: worktree changes\"", ct);
+            if (commitResult.ExitCode != 0)
+                return (false, $"Failed to commit changes: {commitResult.Stderr}");
         }
 
         // Get current branch in main repo

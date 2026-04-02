@@ -49,6 +49,15 @@ public sealed class WorkflowRunner
             var step = workflow.Steps[stepIdx];
             var mode = _modeRegistry.GetMode(step.Mode);
 
+            // Validate mode exists
+            if (mode == null)
+            {
+                yield return new WorkflowStepStarted(workflow.Name, stepIdx, step.Mode);
+                yield return new WorkflowStepCompleted(workflow.Name, stepIdx,
+                    $"failed: unknown mode '{step.Mode}'");
+                yield break;
+            }
+
             yield return new WorkflowStepStarted(workflow.Name, stepIdx, step.Mode);
 
             // Compact messages between steps (except first step)
@@ -75,9 +84,31 @@ public sealed class WorkflowRunner
             var orchestrator = new AgentOrchestrator(
                 _provider, _toolRegistry, _approvalService, _policyEngine, _logger, stepOptions);
 
+            // Track terminal events to detect step failure
+            var stepFailed = false;
+            string? failReason = null;
+
             await foreach (var evt in orchestrator.RunStreamAsync(stepPrompt, messages, ct))
             {
                 yield return evt;
+
+                switch (evt)
+                {
+                    case AgentError e:
+                        stepFailed = true;
+                        failReason = e.Message;
+                        break;
+                    case MaxIterationsReached m:
+                        stepFailed = true;
+                        failReason = $"max iterations reached ({m.Iterations})";
+                        break;
+                }
+            }
+
+            if (stepFailed)
+            {
+                yield return new WorkflowStepCompleted(workflow.Name, stepIdx, $"failed: {failReason}");
+                yield break;
             }
 
             yield return new WorkflowStepCompleted(workflow.Name, stepIdx, "completed");
