@@ -59,6 +59,18 @@ public sealed class ConsoleEventRenderer
                 // Already handled by AgentError/MaxIterationsReached — skip duplicate output
                 break;
 
+            case WorkflowStepStarted stepStart:
+                Console.ForegroundColor = ConsoleColor.Magenta;
+                Console.WriteLine($"[Workflow '{stepStart.WorkflowName}' — Step {stepStart.StepIndex + 1}: {stepStart.ModeName}]");
+                Console.ResetColor();
+                break;
+
+            case WorkflowStepCompleted stepEnd:
+                Console.ForegroundColor = ConsoleColor.Magenta;
+                Console.WriteLine($"[Step {stepEnd.StepIndex + 1} completed: {stepEnd.Reason}]");
+                Console.ResetColor();
+                break;
+
             case ToolProgressEvent progress:
                 Console.ForegroundColor = ConsoleColor.DarkGray;
                 var pctStr = progress.PercentComplete.HasValue ? $" ({progress.PercentComplete:F0}%)" : "";

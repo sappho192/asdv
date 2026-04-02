@@ -69,6 +69,16 @@ public class AgentOrchestrator
 
             yield return new IterationStarted(iteration, _options.MaxIterations);
 
+            // Context compaction: if tokens approach limit, compact messages
+            var maxCtx = state?.MaxContextTokens;
+            if (maxCtx.HasValue && ContextCompactor.NeedsCompaction(messages, maxCtx))
+            {
+                var budget = ContextCompactor.GetTargetBudget(maxCtx.Value);
+                var compacted = ContextCompactor.CompactSlidingWindow(messages, budget);
+                messages.Clear();
+                messages.AddRange(compacted);
+            }
+
             var request = BuildRequest(messages);
             var pendingToolCalls = new List<ToolCallReady>();
             var textBuffer = new StringBuilder();
@@ -269,6 +279,16 @@ public class AgentOrchestrator
             return executionResult;
         }
 
+        // Check if tool is filtered out by execution mode
+        var mode = _options.Mode;
+        if (mode != null && !mode.ToolFilter(tool))
+        {
+            executionResult.Result = ToolResult.Failure(
+                $"Tool '{toolCall.ToolName}' is not available in {mode.Name} mode. " +
+                $"Please use only the tools shown in your tool list.");
+            return executionResult;
+        }
+
         var decision = await _policyEngine.EvaluateAsync(tool, toolCall.ArgsJson);
         if (decision == PolicyDecision.Denied)
         {
@@ -369,6 +389,13 @@ public class AgentOrchestrator
     {
         var prompt = _options.SystemPrompt ?? "";
 
+        // Inject execution mode prompt fragment
+        var mode = _options.Mode;
+        if (mode != null)
+        {
+            prompt += $"\n\n## Execution Mode: {mode.Name}\n\n{mode.PromptFragment}";
+        }
+
         // Inject current work notes into system prompt each turn
         var notes = _options.State?.Notes;
         if (notes != null && notes.Count > 0)
@@ -377,12 +404,15 @@ public class AgentOrchestrator
             prompt += $"\n\n## Current Work Notes\n\n{notesText}\n\nThese notes persist across turns. Use the WorkNotes tool to update them as you make progress.";
         }
 
+        // Filter tools based on execution mode
+        var toolFilter = mode?.ToolFilter;
+
         return new ModelRequest
         {
             Model = _options.Model,
             SystemPrompt = prompt,
             Messages = messages,
-            Tools = _toolRegistry.GetToolDefinitions(),
+            Tools = _toolRegistry.GetToolDefinitions(toolFilter),
             MaxTokens = _options.MaxTokens,
             Temperature = _options.Temperature
         };

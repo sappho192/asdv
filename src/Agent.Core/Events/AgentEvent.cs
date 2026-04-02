@@ -58,3 +58,9 @@ public sealed record SessionError(string SessionId, string Message) : AgentEvent
 // Tool progress events
 
 public sealed record ToolProgressEvent(string CallId, string ToolName, string Message, double? PercentComplete) : AgentEvent;
+
+// Workflow events
+
+public sealed record WorkflowStepStarted(string WorkflowName, int StepIndex, string ModeName) : AgentEvent;
+
+public sealed record WorkflowStepCompleted(string WorkflowName, int StepIndex, string Reason) : AgentEvent;

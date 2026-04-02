@@ -1,3 +1,4 @@
+using Agent.Core.Modes;
 using Agent.Core.Session;
 using Agent.Core.Workspace;
 
@@ -14,4 +15,5 @@ public record AgentOptions
     public double? Temperature { get; init; }
     public SessionState? State { get; init; }
     public bool IsResumed { get; init; }
+    public IExecutionMode? Mode { get; init; }
 }

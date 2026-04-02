@@ -6,11 +6,13 @@ using Agent.Cli.Rendering;
 using Agent.Core.Config;
 using Agent.Core.Approval;
 using Agent.Core.Logging;
+using Agent.Core.Modes;
 using Agent.Core.Orchestrator;
 using Agent.Core.Policy;
 using Agent.Core.Providers;
 using Agent.Core.Session;
 using Agent.Core.Tools;
+using Agent.Core.Workflows;
 using Agent.Llm.Anthropic;
 using Agent.Llm.OpenAI;
 using Agent.Logging;
@@ -370,8 +372,13 @@ static async Task RunAgentAsync(
 
         // Set up command system
         var commandRegistry = new CommandRegistry();
-        // Track mutable model name for /model command
+        // Track mutable state for commands
         var currentModel = resolvedModel;
+        IExecutionMode? currentMode = null;
+        var modeRegistry = new ExecutionModeRegistry();
+        var workflows = WorkflowLoader.LoadFromDirectory(Path.Combine(repoRoot, ".asdv", "workflows"));
+        WorkflowManifest? pendingWorkflow = null;
+        string? pendingWorkflowPrompt = null;
 
         var commandContext = new CommandContext
         {
@@ -404,13 +411,21 @@ static async Task RunAgentAsync(
                 policyEngine.SetAutoApprove(newState);
                 return newState;
             },
-            GetAutoApproveState = () => policyEngine.AutoApprove
+            GetAutoApproveState = () => policyEngine.AutoApprove,
+            OnModeChanged = mode => { currentMode = mode; },
+            OnWorkflowRequested = (wf, prompt) =>
+            {
+                pendingWorkflow = wf;
+                pendingWorkflowPrompt = prompt;
+            }
         };
         commandRegistry.Register(new StatusCommand());
         commandRegistry.Register(new DiffCommand());
         commandRegistry.Register(new NotesCommand());
         commandRegistry.Register(new ModelCommand());
         commandRegistry.Register(new ApproveAllCommand());
+        commandRegistry.Register(new ModeCommand(modeRegistry));
+        commandRegistry.Register(new WorkflowCommand(workflows));
         // HelpCommand needs registry reference — register last
         commandRegistry.Register(new HelpCommand(commandRegistry));
 
@@ -469,13 +484,34 @@ static async Task RunAgentAsync(
                     Console.WriteLine($"Unknown command: {input}. Type /help for available commands.");
                     Console.ResetColor();
                 }
+                // Handle workflow execution if requested by /workflow run
+                if (pendingWorkflow != null)
+                {
+                    var wf = pendingWorkflow;
+                    var wfPrompt = pendingWorkflowPrompt ?? "Execute the workflow.";
+                    pendingWorkflow = null;
+                    pendingWorkflowPrompt = null;
+
+                    var runner = new WorkflowRunner(
+                        modelProvider, toolRegistry, approvalService, policyEngine, logger, modeRegistry);
+                    await foreach (var evt in runner.RunWorkflowAsync(wf, wfPrompt, options, messages, ct))
+                    {
+                        renderer.Render(evt);
+                    }
+                }
+
                 continue;
             }
 
-            // Rebuild orchestrator if model changed via /model command
-            if (currentModel != options.Model)
+            // Rebuild orchestrator if model or mode changed
+            if (currentModel != options.Model || currentMode != options.Mode)
             {
-                options = options with { Model = currentModel, SystemPrompt = GetSystemPrompt(toolRegistry, repoRoot) };
+                options = options with
+                {
+                    Model = currentModel,
+                    SystemPrompt = GetSystemPrompt(toolRegistry, repoRoot),
+                    Mode = currentMode
+                };
                 orchestrator = new AgentOrchestrator(
                     modelProvider, toolRegistry, approvalService, policyEngine, logger, options);
             }
