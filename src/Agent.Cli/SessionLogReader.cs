@@ -11,6 +11,8 @@ public enum ResumeMode
     LastN
 }
 
+public sealed record SessionSnapshot(List<ChatMessage> Messages, Dictionary<string, string> Notes);
+
 public static class SessionLogReader
 {
     private static readonly JsonSerializerOptions SerializerOptions = new()
@@ -18,23 +20,39 @@ public static class SessionLogReader
         PropertyNameCaseInsensitive = true
     };
 
-    public static List<ChatMessage> LoadMessages(
+    public static SessionSnapshot LoadSession(
         string sessionPath, ResumeMode mode, int lastN, Action<string>? warn = null)
     {
-        var allMessages = LoadMessages(sessionPath, warn);
+        var (allMessages, notes) = LoadMessagesAndNotes(sessionPath, warn);
 
-        return mode switch
+        var messages = mode switch
         {
             ResumeMode.Full => allMessages,
             ResumeMode.LastN => TakeLastTurns(allMessages, lastN),
             ResumeMode.Summary => GenerateSummaryMessages(allMessages),
             _ => allMessages
         };
+
+        return new SessionSnapshot(messages, notes);
+    }
+
+    public static List<ChatMessage> LoadMessages(
+        string sessionPath, ResumeMode mode, int lastN, Action<string>? warn = null)
+    {
+        return LoadSession(sessionPath, mode, lastN, warn).Messages;
     }
 
     public static List<ChatMessage> LoadMessages(string sessionPath, Action<string>? warn = null)
     {
+        return LoadMessagesAndNotes(sessionPath, warn).Messages;
+    }
+
+    private static (List<ChatMessage> Messages, Dictionary<string, string> Notes) LoadMessagesAndNotes(
+        string sessionPath, Action<string>? warn = null)
+    {
         var messages = new List<ChatMessage>();
+        var notes = new Dictionary<string, string>();
+
         foreach (var line in File.ReadLines(sessionPath))
         {
             if (string.IsNullOrWhiteSpace(line))
@@ -56,6 +74,31 @@ public static class SessionLogReader
                 }
 
                 var type = typeElement.GetString();
+
+                // Parse work notes
+                if (string.Equals(type, "work_note", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (dataElement.TryGetProperty("key", out var keyEl))
+                    {
+                        var key = keyEl.GetString();
+                        if (!string.IsNullOrEmpty(key))
+                        {
+                            if (dataElement.TryGetProperty("value", out var valEl)
+                                && valEl.ValueKind != JsonValueKind.Null)
+                                notes[key] = valEl.GetString() ?? "";
+                            else
+                                notes.Remove(key); // tombstone
+                        }
+                    }
+                    continue;
+                }
+
+                if (string.Equals(type, "work_note_clear_all", StringComparison.OrdinalIgnoreCase))
+                {
+                    notes.Clear();
+                    continue;
+                }
+
                 if (!string.Equals(type, "message", StringComparison.OrdinalIgnoreCase))
                 {
                     continue;
@@ -93,7 +136,7 @@ public static class SessionLogReader
             }
         }
 
-        return messages;
+        return (messages, notes);
     }
 
     private static AssistantMessage ParseAssistantMessage(JsonElement dataElement)

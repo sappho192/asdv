@@ -11,9 +11,25 @@ public static class SessionLogReader
         PropertyNameCaseInsensitive = true
     };
 
+    public sealed record SessionSnapshot(List<ChatMessage> Messages, Dictionary<string, string> Notes);
+
+    public static SessionSnapshot LoadSession(string sessionPath, Action<string>? warn = null)
+    {
+        var (messages, notes) = LoadMessagesAndNotes(sessionPath, warn);
+        return new SessionSnapshot(messages, notes);
+    }
+
     public static List<ChatMessage> LoadMessages(string sessionPath, Action<string>? warn = null)
     {
+        return LoadMessagesAndNotes(sessionPath, warn).Messages;
+    }
+
+    private static (List<ChatMessage> Messages, Dictionary<string, string> Notes) LoadMessagesAndNotes(
+        string sessionPath, Action<string>? warn = null)
+    {
         var messages = new List<ChatMessage>();
+        var notes = new Dictionary<string, string>();
+
         foreach (var line in File.ReadLines(sessionPath))
         {
             if (string.IsNullOrWhiteSpace(line))
@@ -35,6 +51,31 @@ public static class SessionLogReader
                 }
 
                 var type = typeElement.GetString();
+
+                // Parse work notes
+                if (string.Equals(type, "work_note", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (dataElement.TryGetProperty("key", out var keyEl))
+                    {
+                        var key = keyEl.GetString();
+                        if (!string.IsNullOrEmpty(key))
+                        {
+                            if (dataElement.TryGetProperty("value", out var valEl)
+                                && valEl.ValueKind != JsonValueKind.Null)
+                                notes[key] = valEl.GetString() ?? "";
+                            else
+                                notes.Remove(key); // tombstone
+                        }
+                    }
+                    continue;
+                }
+
+                if (string.Equals(type, "work_note_clear_all", StringComparison.OrdinalIgnoreCase))
+                {
+                    notes.Clear();
+                    continue;
+                }
+
                 if (!string.Equals(type, "message", StringComparison.OrdinalIgnoreCase))
                 {
                     continue;
@@ -72,7 +113,7 @@ public static class SessionLogReader
             }
         }
 
-        return messages;
+        return (messages, notes);
     }
 
     private static AssistantMessage ParseAssistantMessage(JsonElement dataElement)

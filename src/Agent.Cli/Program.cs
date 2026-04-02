@@ -6,12 +6,16 @@ using Agent.Cli.Rendering;
 using Agent.Core.Config;
 using Agent.Core.Approval;
 using Agent.Core.Logging;
+using Agent.Core.Modes;
 using Agent.Core.Orchestrator;
 using Agent.Core.Policy;
 using Agent.Core.Providers;
+using Agent.Core.Session;
 using Agent.Core.Tools;
+using Agent.Core.Workflows;
 using Agent.Llm.Anthropic;
 using Agent.Llm.OpenAI;
+using Agent.Llm.OpenRouter;
 using Agent.Logging;
 using Agent.Tools;
 using Agent.Workspace;
@@ -195,6 +199,17 @@ static async Task RunAgentAsync(
         return;
     }
 
+    // Initialize provider capabilities
+    switch (modelProvider)
+    {
+        case Agent.Llm.OpenAI.OpenAIProvider openai:
+            openai.SetModelCapabilities(resolvedModel);
+            break;
+        case Agent.Llm.Anthropic.ClaudeProvider claude:
+            claude.SetModelCapabilities(resolvedModel);
+            break;
+    }
+
     // Create workspace
     var workspace = new LocalWorkspace(repoRoot);
 
@@ -229,10 +244,11 @@ static async Task RunAgentAsync(
 
     var resumed = File.Exists(sessionPath);
     var messages = new List<Agent.Core.Messages.ChatMessage>();
+    var resumedNotes = new Dictionary<string, string>();
     if (resumed)
     {
         var (parsedResumeMode, lastN) = ParseResumeMode(resumeMode);
-        messages = SessionLogReader.LoadMessages(sessionPath, parsedResumeMode, lastN, warning =>
+        var snapshot = SessionLogReader.LoadSession(sessionPath, parsedResumeMode, lastN, warning =>
         {
             if (debug)
             {
@@ -241,6 +257,8 @@ static async Task RunAgentAsync(
                 Console.ResetColor();
             }
         });
+        messages = snapshot.Messages;
+        resumedNotes = snapshot.Notes;
 
         if (parsedResumeMode != ResumeMode.Full)
         {
@@ -264,6 +282,25 @@ static async Task RunAgentAsync(
         sessionPath = "(none)";
     }
 
+    // Create session state
+    var maxContextTokens = appConfig?.MaxContextTokens
+        ?? modelProvider.Capabilities?.MaxContextTokens;
+
+    var sessionState = new SessionState
+    {
+        SessionId = sessionId,
+        ProviderName = resolvedProvider,
+        ModelName = resolvedModel,
+        MaxContextTokens = maxContextTokens,
+        StartedAt = DateTimeOffset.UtcNow
+    };
+
+    // Restore work notes from previous session
+    foreach (var (key, value) in resumedNotes)
+    {
+        sessionState.Notes[key] = value;
+    }
+
     // Create options
     var options = new AgentOptions
     {
@@ -272,7 +309,9 @@ static async Task RunAgentAsync(
         Workspace = workspace,
         MaxIterations = maxIterations,
         MaxTokens = 4096,
-        SystemPrompt = GetSystemPrompt(toolRegistry, repoRoot)
+        SystemPrompt = GetSystemPrompt(toolRegistry, repoRoot),
+        State = sessionState,
+        IsResumed = resumed
     };
 
     // Print header
@@ -334,6 +373,14 @@ static async Task RunAgentAsync(
 
         // Set up command system
         var commandRegistry = new CommandRegistry();
+        // Track mutable state for commands
+        var currentModel = resolvedModel;
+        IExecutionMode? currentMode = null;
+        var modeRegistry = new ExecutionModeRegistry();
+        var workflows = WorkflowLoader.LoadFromDirectory(Path.Combine(repoRoot, ".asdv", "workflows"));
+        WorkflowManifest? pendingWorkflow = null;
+        string? pendingWorkflowPrompt = null;
+
         var commandContext = new CommandContext
         {
             ProviderName = resolvedProvider,
@@ -341,10 +388,45 @@ static async Task RunAgentAsync(
             SessionId = sessionId,
             SessionPath = sessionPath,
             RepoRoot = repoRoot,
-            AutoApprove = autoApprove
+            AutoApprove = autoApprove,
+            State = sessionState,
+            OnModelChanged = newModel =>
+            {
+                currentModel = newModel;
+                // Refresh capabilities for new model
+                switch (modelProvider)
+                {
+                    case Agent.Llm.OpenAI.OpenAIProvider openai:
+                        openai.SetModelCapabilities(newModel);
+                        break;
+                    case Agent.Llm.Anthropic.ClaudeProvider claude:
+                        claude.SetModelCapabilities(newModel);
+                        break;
+                }
+                sessionState.MaxContextTokens = appConfig?.MaxContextTokens
+                    ?? modelProvider.Capabilities?.MaxContextTokens;
+            },
+            OnApproveAllToggled = () =>
+            {
+                var newState = !policyEngine.AutoApprove;
+                policyEngine.SetAutoApprove(newState);
+                return newState;
+            },
+            GetAutoApproveState = () => policyEngine.AutoApprove,
+            OnModeChanged = mode => { currentMode = mode; },
+            OnWorkflowRequested = (wf, prompt) =>
+            {
+                pendingWorkflow = wf;
+                pendingWorkflowPrompt = prompt;
+            }
         };
         commandRegistry.Register(new StatusCommand());
         commandRegistry.Register(new DiffCommand());
+        commandRegistry.Register(new NotesCommand());
+        commandRegistry.Register(new ModelCommand());
+        commandRegistry.Register(new ApproveAllCommand());
+        commandRegistry.Register(new ModeCommand(modeRegistry));
+        commandRegistry.Register(new WorkflowCommand(workflows));
         // HelpCommand needs registry reference — register last
         commandRegistry.Register(new HelpCommand(commandRegistry));
 
@@ -403,7 +485,36 @@ static async Task RunAgentAsync(
                     Console.WriteLine($"Unknown command: {input}. Type /help for available commands.");
                     Console.ResetColor();
                 }
+                // Handle workflow execution if requested by /workflow run
+                if (pendingWorkflow != null)
+                {
+                    var wf = pendingWorkflow;
+                    var wfPrompt = pendingWorkflowPrompt ?? "Execute the workflow.";
+                    pendingWorkflow = null;
+                    pendingWorkflowPrompt = null;
+
+                    var runner = new WorkflowRunner(
+                        modelProvider, toolRegistry, approvalService, policyEngine, logger, modeRegistry);
+                    await foreach (var evt in runner.RunWorkflowAsync(wf, wfPrompt, options, messages, ct))
+                    {
+                        renderer.Render(evt);
+                    }
+                }
+
                 continue;
+            }
+
+            // Rebuild orchestrator if model or mode changed
+            if (currentModel != options.Model || currentMode != options.Mode)
+            {
+                options = options with
+                {
+                    Model = currentModel,
+                    SystemPrompt = GetSystemPrompt(toolRegistry, repoRoot),
+                    Mode = currentMode
+                };
+                orchestrator = new AgentOrchestrator(
+                    modelProvider, toolRegistry, approvalService, policyEngine, logger, options);
             }
 
             await RunStreamToConsoleAsync(orchestrator, renderer, input, messages, ct);
@@ -467,8 +578,14 @@ static IModelProvider CreateProvider(string provider, AppConfig? appConfig)
             GetRequiredOpenAICompatibleEndpoint(appConfig),
             requireApiKey: false),
 
+        "openrouter" => new OpenRouterProvider(
+            httpClient,
+            Environment.GetEnvironmentVariable("OPENROUTER_API_KEY")
+                ?? throw new InvalidOperationException(
+                    "OPENROUTER_API_KEY environment variable is not set")),
+
         _ => throw new ArgumentException(
-            $"Unknown provider: {provider}. Use 'openai', 'anthropic', or 'openai-compatible'.")
+            $"Unknown provider: {provider}. Use 'openai', 'anthropic', 'openai-compatible', or 'openrouter'.")
     };
 }
 
@@ -514,8 +631,9 @@ static string ResolveModel(string provider, string? model, AppConfig? appConfig)
         "openai" => "gpt-5.4-mini",
         "openai-compatible" => throw new ArgumentException(
             "Model is required for openai-compatible provider. Set --model or model in asdv.yaml."),
+        "openrouter" => "anthropic/claude-sonnet-4-5",
         _ => throw new ArgumentException(
-            $"Unknown provider: {provider}. Use 'openai', 'anthropic', or 'openai-compatible'.")
+            $"Unknown provider: {provider}. Use 'openai', 'anthropic', 'openai-compatible', or 'openrouter'.")
     };
 }
 
@@ -577,6 +695,9 @@ static ToolRegistry CreateToolRegistry()
     registry.Register(new ApplyPatchTool());
     registry.Register(new RunCommandTool());
 
+    // Agent internal tools
+    registry.Register(new WorkNotesTool());
+
     return registry;
 }
 
@@ -604,6 +725,7 @@ static string GetSystemPrompt(ToolRegistry toolRegistry, string repoRoot)
         4. **Verify Results**: Check git status/diff after modifications
         5. **Test Changes**: Run tests when appropriate
         6. **Explain Actions**: Briefly describe what you're doing and why
+        7. **Track Progress**: Use WorkNotes to store plans, key findings, and TODOs
 
         ## Edit Strategies
 

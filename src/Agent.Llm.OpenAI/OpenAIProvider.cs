@@ -16,6 +16,19 @@ public class OpenAIProvider : IModelProvider
     private readonly string _baseUrl;
 
     public string Name => "openai";
+    public IProviderCapabilities? Capabilities { get; private set; }
+
+    private static readonly Dictionary<string, (int context, int output)> KnownModels = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["gpt-4o"] = (128_000, 16_384),
+        ["gpt-4o-mini"] = (128_000, 16_384),
+        ["gpt-5.4-mini"] = (128_000, 16_384),
+        ["gpt-4-turbo"] = (128_000, 4_096),
+        ["gpt-4"] = (8_192, 8_192),
+        ["o1"] = (200_000, 100_000),
+        ["o1-mini"] = (128_000, 65_536),
+        ["o3-mini"] = (200_000, 100_000),
+    };
 
     public OpenAIProvider(HttpClient httpClient, string? apiKey, string? baseUrl = null)
     {
@@ -23,6 +36,16 @@ public class OpenAIProvider : IModelProvider
         _apiKey = apiKey;
         _baseUrl = string.IsNullOrWhiteSpace(baseUrl) ? "https://api.openai.com/v1" : baseUrl;
     }
+
+    public void SetModelCapabilities(string modelName)
+    {
+        if (KnownModels.TryGetValue(modelName, out var info))
+        {
+            Capabilities = new OpenAICapabilities(info.context, info.output);
+        }
+    }
+
+    private sealed record OpenAICapabilities(int? MaxContextTokens, int? MaxOutputTokens) : IProviderCapabilities;
 
     public async IAsyncEnumerable<AgentEvent> StreamAsync(
         ModelRequest request,

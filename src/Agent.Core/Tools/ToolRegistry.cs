@@ -18,9 +18,10 @@ public class ToolRegistry
 
     public IEnumerable<ITool> GetAllTools() => _tools.Values;
 
-    public IReadOnlyList<ToolDefinition> GetToolDefinitions()
+    public IReadOnlyList<ToolDefinition> GetToolDefinitions(Func<ITool, bool>? filter = null)
     {
-        return _tools.Values.Select(t => new ToolDefinition(t.Name, t.Description, t.InputSchema)).ToList();
+        var tools = filter != null ? _tools.Values.Where(filter) : _tools.Values;
+        return tools.Select(t => new ToolDefinition(t.Name, t.Description, t.InputSchema)).ToList();
     }
 
     public string GetToolDescriptionsMarkdown()

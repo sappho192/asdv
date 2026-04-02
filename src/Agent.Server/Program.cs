@@ -62,12 +62,19 @@ app.MapPost("/api/sessions/{id}/resume", (
             return Results.NotFound(new { error = "Session log not found." });
         }
 
-        var messages = SessionLogReader.LoadMessages(logPath, warning =>
+        var snapshot = SessionLogReader.LoadSession(logPath, warning =>
         {
             logger.LogWarning("Session resume warning: {Warning}", warning);
         });
 
-        var session = factory.CreateResume(id, request, messages);
+        var session = factory.CreateResume(id, request, snapshot.Messages);
+
+        // Restore work notes into session state
+        foreach (var (key, value) in snapshot.Notes)
+        {
+            session.State.Notes[key] = value;
+        }
+
         return store.TryAdd(session)
             ? Results.Ok(new CreateSessionResponse(session.Info.Id))
             : Results.Conflict(new { error = "Session already exists." });

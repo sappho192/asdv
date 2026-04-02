@@ -43,6 +43,41 @@ public sealed class ConsoleEventRenderer
                 PrintToolResult(completed.ToolName, completed.Result);
                 break;
 
+            case SessionStarted session:
+                Console.ForegroundColor = ConsoleColor.DarkGray;
+                Console.WriteLine($"[Session {session.SessionId} | {session.Provider}/{session.Model}{(session.Resumed ? " (resumed)" : "")}]");
+                Console.ResetColor();
+                break;
+
+            case SessionCompleted sc:
+                Console.ForegroundColor = ConsoleColor.DarkGray;
+                Console.WriteLine($"[Session completed: {sc.Reason} ({sc.TotalIterations} iterations)]");
+                Console.ResetColor();
+                break;
+
+            case SessionError se:
+                // Already handled by AgentError/MaxIterationsReached — skip duplicate output
+                break;
+
+            case WorkflowStepStarted stepStart:
+                Console.ForegroundColor = ConsoleColor.Magenta;
+                Console.WriteLine($"[Workflow '{stepStart.WorkflowName}' — Step {stepStart.StepIndex + 1}: {stepStart.ModeName}]");
+                Console.ResetColor();
+                break;
+
+            case WorkflowStepCompleted stepEnd:
+                Console.ForegroundColor = ConsoleColor.Magenta;
+                Console.WriteLine($"[Step {stepEnd.StepIndex + 1} completed: {stepEnd.Reason}]");
+                Console.ResetColor();
+                break;
+
+            case ToolProgressEvent progress:
+                Console.ForegroundColor = ConsoleColor.DarkGray;
+                var pctStr = progress.PercentComplete.HasValue ? $" ({progress.PercentComplete:F0}%)" : "";
+                Console.WriteLine($"  [{progress.ToolName}] {progress.Message}{pctStr}");
+                Console.ResetColor();
+                break;
+
             case AgentCompleted:
                 Console.ForegroundColor = ConsoleColor.Green;
                 Console.WriteLine("[Agent completed]");

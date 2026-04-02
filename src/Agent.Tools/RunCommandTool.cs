@@ -9,7 +9,7 @@ public class RunCommandTool : ITool
 {
     public string Name => "RunCommand";
     public string Description => "Execute a command in the repository directory";
-    public ToolPolicy Policy => new() { RequiresApproval = true, Risk = RiskLevel.High };
+    public ToolPolicy Policy => new() { RequiresApproval = true, Risk = RiskLevel.High, ProducesProgress = true, IsExternalSideEffect = true };
 
     public string InputSchema => """
     {
@@ -78,6 +78,7 @@ public class RunCommandTool : ITool
 
         using var process = new Process { StartInfo = psi };
 
+        var lineCount = 0;
         process.OutputDataReceived += (_, e) =>
         {
             if (e.Data != null)
@@ -88,6 +89,15 @@ public class RunCommandTool : ITool
                     {
                         stdout.AppendLine(e.Data);
                     }
+                }
+
+                // Report progress every 10 lines
+                var count = Interlocked.Increment(ref lineCount);
+                if (count % 10 == 0 && ctx.Progress != null)
+                {
+                    var preview = e.Data.Length > 80 ? e.Data[..80] + "..." : e.Data;
+                    ctx.Progress.Report(new ToolProgressInfo(
+                        ctx.CallId ?? "", $"[{count} lines] {preview}"));
                 }
             }
         };

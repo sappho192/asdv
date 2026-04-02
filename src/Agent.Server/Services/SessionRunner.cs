@@ -49,6 +49,10 @@ public sealed class SessionRunner
         CoreEvents.AgentCompleted c => new CompletedEvent(c.Reason),
         CoreEvents.AgentError e => new ErrorEvent(e.Message),
         CoreEvents.MaxIterationsReached _ => new ErrorEvent("Max iterations reached."),
+        CoreEvents.SessionStarted s => new SessionStartedEvent(s.SessionId, s.Provider, s.Model, s.Resumed),
+        CoreEvents.SessionCompleted sc => new SessionCompletedEvent(sc.SessionId, sc.Reason, sc.TotalIterations),
+        CoreEvents.SessionError se => new SessionErrorEvent(se.SessionId, se.Message),
+        CoreEvents.ToolProgressEvent tp => new ToolProgressServerEvent(tp.CallId, tp.ToolName, tp.Message, tp.PercentComplete),
         _ => null
     };
 }

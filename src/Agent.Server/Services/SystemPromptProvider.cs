@@ -27,6 +27,7 @@ public static class SystemPromptProvider
             4. **Verify Results**: Check git status/diff after modifications
             5. **Test Changes**: Run tests when appropriate
             6. **Explain Actions**: Briefly describe what you're doing and why
+            7. **Track Progress**: Use WorkNotes to store plans, key findings, and TODOs
 
             ## Edit Strategies
 

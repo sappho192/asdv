@@ -17,6 +17,9 @@ public record ToolPolicy
     public bool RequiresApproval { get; init; }
     public bool IsReadOnly { get; init; }
     public RiskLevel Risk { get; init; } = RiskLevel.Low;
+    public bool IsConcurrencySafe { get; init; }
+    public bool ProducesProgress { get; init; }
+    public bool IsExternalSideEffect { get; init; }
 }
 
 public enum RiskLevel { Low, Medium, High }

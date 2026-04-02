@@ -7,7 +7,7 @@ public class ReadFileTool : ITool
 {
     public string Name => "ReadFile";
     public string Description => "Read contents of a file within the repository";
-    public ToolPolicy Policy => new() { IsReadOnly = true };
+    public ToolPolicy Policy => new() { IsReadOnly = true, IsConcurrencySafe = true };
 
     public string InputSchema => """
     {

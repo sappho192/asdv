@@ -9,7 +9,7 @@ public class SearchTextTool : ITool
 {
     public string Name => "SearchText";
     public string Description => "Search for text patterns in the repository";
-    public ToolPolicy Policy => new() { IsReadOnly = true };
+    public ToolPolicy Policy => new() { IsReadOnly = true, IsConcurrencySafe = true };
 
     public string InputSchema => """
     {

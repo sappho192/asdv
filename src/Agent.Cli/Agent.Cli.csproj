@@ -24,6 +24,7 @@
     <ProjectReference Include="..\Agent.Workspace\Agent.Workspace.csproj" />
     <ProjectReference Include="..\Agent.Llm.Anthropic\Agent.Llm.Anthropic.csproj" />
     <ProjectReference Include="..\Agent.Llm.OpenAI\Agent.Llm.OpenAI.csproj" />
+    <ProjectReference Include="..\Agent.Llm.OpenRouter\Agent.Llm.OpenRouter.csproj" />
     <ProjectReference Include="..\Agent.Logging\Agent.Logging.csproj" />
   </ItemGroup>
 

@@ -4,6 +4,7 @@ using Agent.Core.Messages;
 using Agent.Core.Orchestrator;
 using Agent.Core.Policy;
 using Agent.Core.Providers;
+using Agent.Core.Session;
 using Agent.Core.Tools;
 using Agent.Server.Models;
 
@@ -23,7 +24,13 @@ public sealed class SessionRuntime
         ServerApprovalService approvalService)
     {
         Info = info;
-        Options = options;
+        State = new SessionState
+        {
+            SessionId = info.Id,
+            ProviderName = info.Provider,
+            ModelName = info.Model
+        };
+        Options = options with { State = State };
         ToolRegistry = toolRegistry;
         Provider = provider;
         PolicyEngine = policyEngine;
@@ -33,6 +40,7 @@ public sealed class SessionRuntime
 
     public SessionInfo Info { get; }
     public AgentOptions Options { get; }
+    public SessionState State { get; }
     public ToolRegistry ToolRegistry { get; }
     public IModelProvider Provider { get; }
     public IPolicyEngine PolicyEngine { get; }
